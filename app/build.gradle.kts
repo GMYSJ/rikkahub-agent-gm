@@ -78,7 +78,13 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            val releaseSigning = signingConfigs.getByName("release")
+            // 个人使用：未配置正式 keystore 时退回 debug 签名，保证 release APK 可直接安装
+            signingConfig = if (releaseSigning.storeFile == null) {
+                signingConfigs.getByName("debug")
+            } else {
+                releaseSigning
+            }
             optimization {
                 enable = true
             }
