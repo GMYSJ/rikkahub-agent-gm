@@ -1,4 +1,4 @@
-name: Build Android Release APK
+name: Build Android Agent APK
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build Debug APK
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
@@ -26,8 +26,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # The app module depends on the `web` module, whose preBuild task runs
-      # `bun install` and `pnpm run build` to produce the embedded web UI.
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
@@ -50,13 +48,13 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Build Release APK
-        run: ./gradlew :app:assembleRelease --no-daemon
+      - name: Build Debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
 
-      - name: Upload Release APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: RikkaHub-Agent-Release-APK
+          name: RikkaHub-Agent-APK
           path: |
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
