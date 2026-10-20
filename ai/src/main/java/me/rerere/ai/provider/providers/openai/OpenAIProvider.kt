@@ -35,7 +35,7 @@ import me.rerere.ai.util.KeyRoulette
 import me.rerere.ai.util.configureReferHeaders
 import me.rerere.ai.util.json
 import me.rerere.ai.util.mergeCustomBody
-import me.rerere.ai.util.toHeaders
+import me.rerere.ai.util.mergeCustomHeaders
 import me.rerere.common.http.await
 import me.rerere.common.http.getByKey
 import okhttp3.MultipartBody
@@ -87,6 +87,7 @@ class OpenAIProvider(
             }
             val request = Request.Builder()
                 .url(modelsUrl)
+                .headers(providerSetting.mergeCustomHeaders())
                 .addHeader("Authorization", "Bearer $key")
                 .get()
                 .build()
@@ -148,6 +149,7 @@ class OpenAIProvider(
         }
         val request = Request.Builder()
             .url(url)
+            .headers(providerSetting.mergeCustomHeaders())
             .addHeader("Authorization", "Bearer $key")
             .get()
             .build()
@@ -226,7 +228,7 @@ class OpenAIProvider(
 
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}/embeddings")
-            .headers(params.customHeaders.toHeaders())
+            .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .addHeader("Authorization", "Bearer $key")
             .addHeader("Content-Type", "application/json")
             .post(requestBody.toRequestBody("application/json".toMediaType()))
@@ -314,7 +316,7 @@ class OpenAIProvider(
 
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}/images/generations")
-            .headers(params.customHeaders.toHeaders())
+            .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .addHeader("Authorization", "Bearer $key")
             .addHeader("Content-Type", "application/json")
             .post(requestBody.toRequestBody("application/json".toMediaType()))
@@ -354,37 +356,37 @@ class OpenAIProvider(
 
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}/images")
-            .headers(params.customHeaders.toHeaders())
-            .addHeader("Authorization", "Bearer $key")
-            .addHeader("Content-Type", "application/json")
-            .post(json.encodeToString(body).toRequestBody("application/json".toMediaType()))
-            .configureReferHeaders(providerSetting.baseUrl)
-            .build()
+            .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
+                        .addHeader("Authorization", "Bearer $key")
+                        .addHeader("Content-Type", "application/json")
+                        .post(json.encodeToString(body).toRequestBody("application/json".toMediaType()))
+                        .configureReferHeaders(providerSetting.baseUrl)
+                        .build()
 
-        val response = client.newCall(request).await()
-        val bodyStr = response.body.string()
-        if (shouldFallbackToChatCompletionsImage(response.code, bodyStr)) return null
-        if (!response.isSuccessful) {
-            error(extractOpenRouterErrorMessage(response.code, bodyStr))
-        }
-        return parseOpenRouterImagesResponse(bodyStr)
-    }
+                    val response = client.newCall(request).await()
+                    val bodyStr = response.body.string()
+                    if (shouldFallbackToChatCompletionsImage(response.code, bodyStr)) return null
+                    if (!response.isSuccessful) {
+                        error(extractOpenRouterErrorMessage(response.code, bodyStr))
+                    }
+                    return parseOpenRouterImagesResponse(bodyStr)
+                }
 
-    /** OpenRouter image generation via /chat/completions with modalities:["image","text"]. */
-    private suspend fun generateImageViaChatCompletions(
-        providerSetting: ProviderSetting.OpenAI,
-        params: ImageGenerationParams,
-        key: String,
-    ): List<ImageGenerationItem> {
-        val body = buildOpenRouterChatCompletionsImageBody(
-            modelId = params.model.modelId,
-            prompt = params.prompt,
-            aspectRatio = params.aspectRatio,
-        ).mergeCustomBody(params.customBody)
+                /** OpenRouter image generation via /chat/completions with modalities:[\"image\",\"text\"]. */
+                private suspend fun generateImageViaChatCompletions(
+                    providerSetting: ProviderSetting.OpenAI,
+                    params: ImageGenerationParams,
+                    key: String,
+                ): List<ImageGenerationItem> {
+                    val body = buildOpenRouterChatCompletionsImageBody(
+                        modelId = params.model.modelId,
+                        prompt = params.prompt,
+                        aspectRatio = params.aspectRatio,
+                    ).mergeCustomBody(params.customBody)
 
-        val request = Request.Builder()
-            .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
-            .headers(params.customHeaders.toHeaders())
+                    val request = Request.Builder()
+                        .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
+                        .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .addHeader("Authorization", "Bearer $key")
             .addHeader("Content-Type", "application/json")
             .post(json.encodeToString(body).toRequestBody("application/json".toMediaType()))
@@ -415,7 +417,7 @@ class OpenAIProvider(
 
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}")
-            .headers(params.customHeaders.toHeaders())
+            .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .addHeader("Authorization", "Bearer $key")
             .addHeader("Content-Type", "application/json")
             .post(json.encodeToString(body).toRequestBody("application/json".toMediaType()))
@@ -518,7 +520,7 @@ class OpenAIProvider(
 
         val request = Request.Builder()
             .url("${providerSetting.baseUrl}/images/edits")
-            .headers(params.customHeaders.toHeaders())
+            .headers(providerSetting.mergeCustomHeaders(params.customHeaders))
             .addHeader("Authorization", "Bearer $key")
             .post(bodyBuilder.build())
             .configureReferHeaders(providerSetting.baseUrl)
