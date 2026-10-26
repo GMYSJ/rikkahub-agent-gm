@@ -197,10 +197,22 @@ sealed class UIMessagePart {
          * "never started" (Approved-but-not-yet-tried).
          */
         val executionStartedAt: Long? = null,
+        /**
+         * Unix-millisecond timestamp set right after the tool body returned (or threw).
+         * Paired with [executionStartedAt] it gives the wall-clock time the tool took,
+         * which the tool step shows next to its title.
+         */
+        val executionFinishedAt: Long? = null,
         override var metadata: JsonObject? = null
     ) : UIMessagePart() {
         /** Whether the tool has been executed (has output) */
         val isExecuted: Boolean get() = output.isNotEmpty()
+
+        /** Wall-clock duration of a finished execution; null when it never ran or is still running. */
+        val executionDurationMs: Long?
+            get() = executionStartedAt?.let { start ->
+                executionFinishedAt?.let { end -> (end - start).coerceAtLeast(0L) }
+            }
 
         /** Whether the tool is pending user approval */
         val isPending: Boolean get() = !isExecuted && approvalState is ToolApprovalState.Pending
@@ -233,6 +245,7 @@ sealed class UIMessagePart {
                 output = output + other.output,
                 approvalState = approvalState,
                 executionStartedAt = executionStartedAt ?: other.executionStartedAt,
+                executionFinishedAt = executionFinishedAt ?: other.executionFinishedAt,
                 metadata = if (other.metadata != null) other.metadata else metadata,
             )
         }

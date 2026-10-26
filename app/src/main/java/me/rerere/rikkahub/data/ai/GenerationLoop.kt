@@ -1085,7 +1085,8 @@ class GenerationLoop(
                             // the context window.
                             val hasShellAccess = toolsInternal.any { it.name == "workspace_shell" }
                             executedTools += markedTool.copy(
-                                output = maybeTruncateToolOutput(tool.toolCallId, result, hasShellAccess)
+                                output = maybeTruncateToolOutput(tool.toolCallId, result, hasShellAccess),
+                                executionFinishedAt = System.currentTimeMillis(),
                             )
                         }.onFailure {
                             // runCatching also captures CancellationException (e.g. the user
@@ -1104,7 +1105,8 @@ class GenerationLoop(
                             // user-visible "java.lang.IllegalStateException at ..." walls
                             // for what was usually a one-line "name is required" problem.
                             Log.w(TAG, "tool ${tool.toolName} threw", it)
-                            executedTools += tool.copy(
+                            executedTools += markedTool.copy(
+                                executionFinishedAt = System.currentTimeMillis(),
                                 output = listOf(
                                     UIMessagePart.Text(
                                         json.encodeToString(

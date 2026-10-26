@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -187,14 +189,27 @@ fun ChainOfThoughtScope.ChatMessageToolStep(
             }
         },
         label = {
-            Text(
-                text = renderer.title(context),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.shimmer(isLoading = loading),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = renderer.title(context),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier
+                        .shimmer(isLoading = loading)
+                        .weight(1f, fill = false),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // 工具执行耗时：本地执行的开始/结束时间都在 Tool 上，跑完才显示
+                tool.executionDurationMs?.let { durationMs ->
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = formatToolDuration(durationMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         },
         extra = if (isPending && onToolApproval != null) {
             {
@@ -745,4 +760,11 @@ private fun ToolDenyReasonDialog(
             }
         }
     )
+}
+
+/** 把毫秒时长格式化成 850ms / 1.2s / 2m03s，用于工具步骤右侧的执行耗时。 */
+private fun formatToolDuration(ms: Long): String = when {
+    ms < 1_000L -> "${ms}ms"
+    ms < 60_000L -> "%.1fs".format(ms / 1000.0)
+    else -> "%dm%02ds".format(ms / 60_000L, (ms % 60_000L) / 1000L)
 }
