@@ -1,63 +1,54 @@
 package me.rerere.rikkahub.utils
 
-import me.rerere.ui.markdown.MarkdownBlock
-import me.rerere.ui.markdown.MarkdownInline
-import me.rerere.ui.markdown.parseMarkdown
-
 /**
  * 移除字符串中的 Markdown 格式，得到用于朗读的纯文本
  *
- * 复用渲染用的 [parseMarkdown]，哪些内容算 HTML 标签、链接或代码都和界面上显示的一致，
- * 不会把 `x<y && y>0` 这种正文当成标签删掉。代码、公式和图片不朗读。
- * 输出是已解码的纯文本，不要再对结果调用一次，否则 `&lt;tag&gt;` 解码出的文字会被当成标签。
- * @return 移除Markdown格式后的纯文本
+ * 只保留正文：代码、公式和图片不朗读；HTML 标签、注释、style/script 块一并去掉，
+ * 常见 HTML 实体解码成字符。标签名走白名单，避免把 `x<y && y>0` 这种正文当成标签删掉。
+ * @return 移除 Markdown 格式后的纯文本
  */
 fun String.stripMarkdown(): String {
-    return buildString { appendBlocks(parseMarkdown(this@stripMarkdown).blocks) }
-        // 去掉代码等内容后会留下空行和连续空格
-        .replace(Regex("[ \t]*\n\\s*"), "\n")
-        .replace(Regex("[ \t]{2,}"), " ")
+    return this
+        // HTML 注释与 style/script 块（含内容）
+        .replace(Regex("<!--[\\s\\S]*?-->"), "")
+        .replace(Regex("<(style|script)\\b[\\s\\S]*?</\\1\\s*>", RegexOption.IGNORE_CASE), "")
+        // 代码块 (```...``` 和 `...`)
+        .replace(Regex("```[\\s\\S]*?```|`[^`]*?`"), "")
+        // 图片和链接保留文本
+        .replace(Regex("!?\\[([^\\]]+)\\]\\([^\\)]*\\)"), "$1")
+        // 加粗、斜体、删除线
+        .replace(Regex("\\*\\*([^*]+?)\\*\\*"), "$1")
+        .replace(Regex("\\*([^*]+?)\\*"), "$1")
+        .replace(Regex("__([^_]+?)__"), "$1")
+        .replace(Regex("_([^_]+?)_"), "$1")
+        .replace(Regex("~~([^~]+?)~~"), "$1")
+        // 标题、列表、引用、分割线
+        .replace(Regex("(?m)^#+\\s*"), "")
+        .replace(Regex("(?m)^\\s*[-*+]\\s+"), "")
+        .replace(Regex("(?m)^\\s*\\d+\\.\\s+"), "")
+        .replace(Regex("(?m)^>\\s*"), "")
+        .replace(Regex("(?m)^(\\s*[-*_]){3,}\\s*$"), "")
+        // 块级换行标签转成换行，避免把上下句粘连
+        .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+        // 其余 HTML 标签：只认白名单标签名，正文里的 < > 不会被误删
+        .replace(Regex("</?(?:$HTML_TAG_NAMES)(?:\\s[^<>]*)?/?>", RegexOption.IGNORE_CASE), "")
+        // 常见 HTML 实体
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        // 去掉代码等内容后留下的空行和连续空格
+        .replace(Regex("[ \\t]+\\n"), "\n")
+        .replace(Regex("[ \\t]{2,}"), " ")
+        .replace(Regex("\\n{2,}"), "\n")
         .trim()
 }
 
-private fun StringBuilder.appendBlocks(blocks: List<MarkdownBlock>) {
-    for (block in blocks) {
-        when (block) {
-            is MarkdownBlock.Paragraph -> appendInlines(block.content)
-            is MarkdownBlock.Heading -> appendInlines(block.content)
-            is MarkdownBlock.Quote -> appendBlocks(block.children)
-            is MarkdownBlock.ListBlock -> block.items.forEach { appendBlocks(it.children) }
-            is MarkdownBlock.Table -> (listOf(block.header) + block.rows).forEach { row ->
-                row.forEach { cell ->
-                    appendInlines(cell.content)
-                    append(' ')
-                }
-                append('\n')
-            }
-
-            is MarkdownBlock.Details -> {
-                appendInlines(block.summary)
-                append('\n')
-                appendBlocks(block.children)
-            }
-
-            is MarkdownBlock.Container -> appendBlocks(block.children)
-            is MarkdownBlock.CodeBlock, MarkdownBlock.Divider -> Unit
-        }
-        append('\n')
-    }
-}
-
-private fun StringBuilder.appendInlines(nodes: List<MarkdownInline>) {
-    for (node in nodes) {
-        when (node) {
-            is MarkdownInline.Text -> append(node.text)
-            is MarkdownInline.Styled -> appendInlines(node.children)
-            is MarkdownInline.Link -> appendInlines(node.children)
-            is MarkdownInline.Code, is MarkdownInline.Image, is MarkdownInline.Math -> Unit
-        }
-    }
-}
+private const val HTML_TAG_NAMES =
+    "a|abbr|b|blockquote|br|code|del|details|div|em|h[1-6]|hr|i|img|ins|kbd|li|ol|p|pre|s|" +
+        "script|span|strong|style|sub|summary|sup|table|tbody|td|th|thead|tr|u|ul"
 
 fun String.extractThinkingTitle(): String? {
     // 按行分割文本

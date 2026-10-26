@@ -19,14 +19,11 @@ android {
         applicationId = "excp.rikkahub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 188
-        versionName = "2.5.1-agent.2"
+        versionCode = 189
+        versionName = "2.5.1-agent.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
-        }
     }
 
     splits {
@@ -36,8 +33,9 @@ android {
             val isBuildingBundle = gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
             isEnable = !isBuildingBundle
             reset()
-            include("arm64-v8a", "x86_64")
-            isUniversalApk = true
+            // 只为 arm64-v8a 构建，减小产物体积（真机专用）
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
 

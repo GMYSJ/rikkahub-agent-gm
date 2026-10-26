@@ -27,8 +27,6 @@ app/google-services.json
 # regenerated each release; no need to track them in git.
 /release-artifacts/
 
-# Release signing keystore — never commit
-/rikkahub-release.jks
 
 # Local planning doc — not for the remote
 /enhance.md
