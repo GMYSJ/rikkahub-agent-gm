@@ -76,6 +76,8 @@ android {
 
     buildTypes {
         release {
+            // 与已安装的 2.5.1-agent.2（debug 包）同包名，保证可以直接覆盖安装
+            applicationIdSuffix = ".debug"
             val releaseSigning = signingConfigs.getByName("release")
             // 个人使用：未配置正式 keystore 时退回 debug 签名，保证 release APK 可直接安装
             signingConfig = if (releaseSigning.storeFile == null) {
