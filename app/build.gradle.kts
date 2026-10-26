@@ -86,6 +86,12 @@ android {
             } else {
                 releaseSigning
             }
+            // 三种签名方案全开，兼容对 v1 有要求的国产 ROM 安装器
+            signingConfig?.apply {
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
             optimization {
                 enable = true
             }
