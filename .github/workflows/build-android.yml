@@ -6,6 +6,9 @@ on:
     branches:
       - master
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build APK
@@ -47,6 +50,28 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
+
+      # 固定签名：首次构建生成 release.keystore 并提交回仓库，之后每次构建都用同一把 key，
+      # 这样新版本才能覆盖安装旧版本。local.properties 每次构建重新生成，不进仓库。
+      - name: Ensure fixed signing keystore
+        run: |
+          if [ ! -f release.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore ./release.keystore \
+              -storetype PKCS12 \
+              -storepass android \
+              -keypass android \
+              -alias rikkahub \
+              -dname "CN=RikkaHub Agent, O=GM, C=CN" \
+              -keyalg RSA -keysize 2048 -validity 10000
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f release.keystore
+            git commit -m "chore: add fixed signing keystore [skip ci]"
+            git push
+          fi
+          printf 'storeFile=%s/release.keystore\nstorePassword=android\nkeyAlias=rikkahub\nkeyPassword=android\n' "$GITHUB_WORKSPACE" > local.properties
+          cat local.properties
 
       - name: Build Release APK (arm64-v8a only, R8 optimized)
         run: ./gradlew :app:assembleRelease --no-daemon

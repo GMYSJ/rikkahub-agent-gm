@@ -76,8 +76,9 @@ android {
 
     buildTypes {
         release {
-            // 与已安装的 2.5.1-agent.2（debug 包）同包名，保证可以直接覆盖安装
-            applicationIdSuffix = ".debug"
+            // 用独立包名避开与已安装的官方版 / 旧 agent 版同名不同签名的冲突；
+            // 之后的版本沿用同一个包名 + 固定 keystore，即可正常覆盖升级
+            applicationIdSuffix = ".agent"
             val releaseSigning = signingConfigs.getByName("release")
             // 个人使用：未配置正式 keystore 时退回 debug 签名，保证 release APK 可直接安装
             signingConfig = if (releaseSigning.storeFile == null) {
@@ -93,7 +94,7 @@ android {
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
         }
         debug {
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = ".agent.debug"
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
             buildConfigField("String", "UPDATE_API_URL", "\"\"")
