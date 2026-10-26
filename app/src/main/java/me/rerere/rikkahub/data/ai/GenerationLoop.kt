@@ -1028,6 +1028,9 @@ class GenerationLoop(
                             )
                             return@forEach
                         }
+                        // 记录本地执行的开始时间：失败分支在 runCatching 之外，
+                        // 拿不到里面声明的 markedTool，所以时间戳要放在外面。
+                        val toolStartMs = System.currentTimeMillis()
                         runCatching {
                             val args = parsedArgs.getOrThrow()
                             if (BuildConfig.DEBUG) {
@@ -1040,7 +1043,7 @@ class GenerationLoop(
                             // and refuse to silently re-run. The mark survives via the
                             // existing emit-and-persist plumbing — see ChatService chunk
                             // handler's needsImmediatePersist branch.
-                            val markedTool = tool.copy(executionStartedAt = System.currentTimeMillis())
+                            val markedTool = tool.copy(executionStartedAt = toolStartMs)
                             run {
                                 val lastMsg = messages.lastOrNull()
                                 if (lastMsg != null) {
@@ -1105,7 +1108,8 @@ class GenerationLoop(
                             // user-visible "java.lang.IllegalStateException at ..." walls
                             // for what was usually a one-line "name is required" problem.
                             Log.w(TAG, "tool ${tool.toolName} threw", it)
-                            executedTools += markedTool.copy(
+                            executedTools += tool.copy(
+                                executionStartedAt = toolStartMs,
                                 executionFinishedAt = System.currentTimeMillis(),
                                 output = listOf(
                                     UIMessagePart.Text(
