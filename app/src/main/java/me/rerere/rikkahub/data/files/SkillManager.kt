@@ -154,7 +154,10 @@ class SkillManager(
     }
 
     suspend fun deleteSkill(name: String): Boolean = withContext(Dispatchers.IO) {
-        val skillDir = resolveSkillDir(name) ?: return@withContext false
+        // 目录名可能和 frontmatter 的 name 不一致（用户在工作区里改过名或直接复制目录），
+        // 这时按 name 拼路径找不到目录，回退成扫描目录、比对 frontmatter 里的 name。
+        val skillDir = resolveSkillDir(name) ?: findSkillDirByFrontmatterName(name)
+            ?: return@withContext false
         // Bundled-ness must be checked before deleteRecursively() destroys the directory:
         // for a non-core bundled skill, ownership is tracked by a `.seeded` sentinel that
         // lives inside this same directory, but bundledSkillNames() reads the asset list,
@@ -483,6 +486,24 @@ class SkillManager(
 
     private fun resolveSkillDir(skillName: String): File? {
         return SkillPaths.resolveSkillDir(getSkillsDir(), skillName)
+    }
+
+    /**
+     * 按 frontmatter 里的 `name` 找到技能实际所在的目录。
+     *
+     * `resolveSkillDir` 是按目录名解析的，目录名和 name 不一致（工作区里直接复制、
+     * 或改过 frontmatter）时会返回 null，导致技能在列表里可见却删不掉。
+     */
+    private fun findSkillDirByFrontmatterName(name: String): File? {
+        val root = getSkillsDir()
+        return root.listFiles()
+            ?.filter { it.isDirectory && !it.name.startsWith(".") }
+            ?.firstOrNull { dir ->
+                val skillFile = dir.resolve("SKILL.md")
+                if (!skillFile.exists()) return@firstOrNull false
+                val raw = runCatching { readCached(skillFile) }.getOrNull() ?: return@firstOrNull false
+                SkillFrontmatterParser.parse(raw)["name"]?.trim() == name
+            }
     }
 
     private fun createTempSkillDir(skillsRoot: File, skillName: String, suffix: String): File? {
