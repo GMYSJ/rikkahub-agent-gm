@@ -3,6 +3,7 @@ package me.rerere.rikkahub.data.remote
 import kotlinx.serialization.Serializable
 import kotlin.uuid.Uuid
 import me.rerere.ai.provider.CustomHeader
+import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.ai.mcp.McpCommonOptions
 import me.rerere.rikkahub.data.ai.mcp.McpServerConfig
@@ -131,8 +132,15 @@ data class RemoteNode(
 
     /**
      * 用指定地址生成 OpenAI 兼容 Provider 配置（模型面）。
+     *
+     * @param keepModels 已存在的模型列表。网络切换覆盖配置时**必须传入**，
+     *   否则 models 被清空重建，用户选中的模型（chatModelId 指向的 Uuid）失效，
+     *   每次自动切换后都要手动重选模型——这正是之前版本的 bug。
      */
-    fun toOpenAIProvider(endpoint: RemoteEndpoint? = null): ProviderSetting.OpenAI? {
+    fun toOpenAIProvider(
+        endpoint: RemoteEndpoint? = null,
+        keepModels: List<Model> = emptyList(),
+    ): ProviderSetting.OpenAI? {
         if (!enabled || !enableModels) return null
         val ep = endpoint ?: sortedEndpoints.firstOrNull() ?: return null
         return ProviderSetting.OpenAI(
@@ -143,7 +151,8 @@ data class RemoteNode(
             baseUrl = ep.llmBaseUrl,
             chatCompletionsPath = "/chat/completions",
             customHeaders = listOf(CustomHeader("Authorization", "Bearer ${ep.token}")),
-            models = emptyList(),
+            // 关键：原样保留模型列表（含每个模型的 Uuid），让 chatModelId 继续有效
+            models = keepModels,
         )
     }
 

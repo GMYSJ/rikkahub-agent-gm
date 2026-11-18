@@ -63,7 +63,13 @@ object RemoteNodeSync {
             p.name.startsWith("DSH: ") || p.id in nodeIds
         }
         val keptProviders = settings.providers.filterNot(isManagedProvider)
-        val newProviders = nodes.mapNotNull { node -> node.toOpenAIProvider(selected[node.id]) }
+        // 关键：覆盖时保留旧 Provider 的 models（含模型 Uuid），
+        // 否则用户选中的模型会因对象重建而失效，每次自动切换都要重选。
+        val newProviders = nodes.mapNotNull { node ->
+            val existing = settings.providers.firstOrNull { it.id == node.id }
+            val keepModels = if (existing is ProviderSetting.OpenAI) existing.models else emptyList()
+            node.toOpenAIProvider(selected[node.id], keepModels = keepModels)
+        }
         val mergedProviders = keptProviders + newProviders
 
         // ---- assistants：按需自动勾选 MCP server ----
