@@ -223,11 +223,34 @@ lan:
 **手机配置**：设置 → 远程 DSH 节点，把 IP 改成 `100.91.212.5`、端口 `61421`、
 token 用 Tailscale 那把（见 profile 的第三个 token）。手机上装了 Tailscale 并登录同一账号即可。
 
-**其它通道现状**：
-- **EasyTier**：进程在跑但无虚拟网卡 IP（GUI 模式，未建 tun），暂不可用
-- **cpolar**：主提示词说用户有通道，但本次会话未见监听；需要时可再接（HTTP 反代到 61420）
-- **Tailscale Funnel**：已知不可用（主提示词明确），不用
-- 当前 Tailscale 是 **tailnet 内直连**（需两端都登录），不是公网开放——这是最安全的形态
+**EasyTier 通道也已打通**（2026-11-19 修正）：网卡 `et_6_2etc` = `10.126.126.1`，
+之前误判为"无 IP"。现为第三条监听 `10.126.126.1:61422`，三通道 health 全绿。
+
+### cpolar 固定入口：当前做不到（已只读调研确认）
+
+用户要"手机只配一个固定 URL，在家在外不变"（方案 A），调研结论：**当前做不到**。
+
+| 缺什么 | 证据 |
+|---|---|
+| 账号侧保留二级子域名 | CLI 无法查/办；需登录 dashboard.cpolar.com → 预留（**基础版+，免费版不行**） |
+| 插件版本太旧 | 本机 `dsh-go-workspace 0.6.4-desktop.14`，源码无 `-subdomain` 参数；需 ≥0.6.7 |
+| 固定 TCP 地址 | 需专业版+，且手机端要改造才能用 `tcp://` |
+
+现有两条隧道：`website`(http→8080)、`remoteDesktop`(tcp→3389)，均无 subdomain/固定地址。
+cpolar 非常驻服务，由移动插件按需 spawn。
+
+**我不会擅自升级网关插件**（会清 `dsh.profile.bundles`、与旧 desktop-extension 冲突），
+也不会动用户的付费账号。若要走 A，需要用户自己确认账号套餐与是否愿意升级插件。
+
+### 方案 B（已实现，待 CI 编译验证）
+
+既然固定域名不可得，改为**一个节点配任意多条地址 + 自动探测选路**：
+- `RemoteEndpoint`：任意条，每条独立 token/priority（LAN / Tailscale / EasyTier / 未来任何通道）
+- `RemoteNodeProbe`：OkHttp 并发探测所有 `/health`，按可达性+延迟选最优
+- 设置页：增删任意地址，"探测并保存" / "重新探测" 一键切换
+- 提交 `b9f4e29`，静态校验 11/11，**CI 编译验证中**
+
+> 老配置兼容：保留 host/port/token 单地址字段，为空时由新结构回退。
 
 ## Git 版本控制 ✅
 
