@@ -797,30 +797,56 @@ export function apply(ctx, config) {
       }
 
       // `GET <base>/v1/models` —— 让手机列出电脑上可用的模型。
-      // 走 ctx.llm.listProviders()（README 确认存在），不虚构模型。
+      //
+      // 关键：RikkaHub 的 OpenAIProvider.listModels()（OpenAIProvider.kt:78-86）
+      // 会 GET <baseUrl>/models 自动拉取模型填进选择器。所以这里必须返回
+      // **真正的 `provider/model` 组合**，而不是 provider 路由名 ——
+      // 否则手机能连上但模型列表是空的，用户以为功能坏了。
+      //
+      // listModels(provider) 可能联网且较慢，逐个 try-catch + 并发，
+      // 单个 provider 失败只跳过它，不影响其它 provider。
       if (tail === '/llm/v1/models' && req.method === 'GET') {
         const gate = preflight(req, res, checks);
         if (!gate.ok) return;
-        if (ctx.llm === undefined || typeof ctx.llm.listProviders !== 'function') {
+        if (ctx.llm === undefined || typeof ctx.llm.listProviders !== 'function'
+          || typeof ctx.llm.listModels !== 'function') {
           sendJson(res, 503, errorEnvelope(ERROR_CODE.INTERNAL, 'llm service is not available in this profile'));
           return;
         }
         try {
           const providers = ctx.llm.listProviders() ?? [];
+          const created = Math.floor(Date.now() / 1000);
           /** @type {Array<object>} */
           const models = [];
-          for (const provider of providers) {
-            // LlmProviderInfo = { id, name }（dsh-llm/src/types.ts:230-235）。
-            // id 是 GenerateOptions.provider 用的路由键，正好可作模型 id。
+
+          // 并发拉每个 provider 的模型；全部 settle 后再汇总。
+          await Promise.all(providers.map(async (provider) => {
             const key = typeof provider?.id === 'string' ? provider.id : '';
-            if (key === '') continue;
-            models.push({
-              id: key,
-              object: 'model',
-              created: Math.floor(Date.now() / 1000),
-              owned_by: typeof provider?.name === 'string' && provider.name !== '' ? provider.name : key,
-            });
-          }
+            if (key === '') return;
+            const displayName = typeof provider?.name === 'string' && provider.name !== ''
+              ? provider.name
+              : key;
+            try {
+              const list = await ctx.llm.listModels(key) ?? [];
+              for (const item of list) {
+                const modelId = typeof item?.id === 'string' ? item.id : '';
+                if (modelId === '') continue;
+                // 拼成 provider/model —— 转换器正是按这个格式拆成两个字段的。
+                models.push({
+                  id: `${key}/${modelId}`,
+                  object: 'model',
+                  created,
+                  owned_by: displayName,
+                  // RikkaHub 的 Model 会读 name 作 displayName；这里额外带上原始字段。
+                  name: typeof item?.name === 'string' && item.name !== '' ? item.name : modelId,
+                });
+              }
+            } catch {
+              // 某个 provider 的模型目录拉取失败（加密钥失效、网络不通等），
+              // 跳过它即可。不虚构模型，也不让整个列表失败。
+            }
+          }));
+
           sendJson(res, 200, { object: 'list', data: models });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
