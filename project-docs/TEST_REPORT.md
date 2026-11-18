@@ -83,10 +83,24 @@ MCP tools/call 返回 {"battery":87,"detail":true}
 
 ### 复现命令
 
+> ⚠️ **找端口别猜。** DSH 会listen 多个回环端口（webServer + 内部服务），
+> 桥只挂在 webServer 上。用 `-and $_.LocalAddress -eq '127.0.0.1'` 筛出来的可能不止一个，
+> 必须**探 `/dsh-mobile-bridge/health`** 才准。踩过一次：误把内部服务端口当成桥，
+> 结果 403。
+
 ```powershell
-# 端口每次重启变，先查
+# 逐个探测，找出桥真正在哪个端口
 $procs = Get-Process 'DeepSeek Harness'
-$port = (Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in $procs.Id -and $_.LocalAddress -eq '127.0.0.1' } | Select-Object -First 1).LocalPort
+$ports = Get-NetTCPConnection -State Listen |
+  Where-Object { $_.OwningProcess -in $procs.Id -and $_.LocalAddress -eq '127.0.0.1' } |
+  Select-Object -ExpandProperty LocalPort | Sort-Object -Unique
+
+foreach ($p in $ports) {
+  try {
+    $r = Invoke-RestMethod "http://127.0.0.1:$p/dsh-mobile-bridge/health" -TimeoutSec 3 -ErrorAction Stop
+    if ($r.ok) { Write-Host "桥在 $p"; $port = $p; break }
+  } catch { }   # 非桥端口会 404/403，忽略
+}
 
 # 从 profile 的 patch 里读出桥的 Bearer 令牌（只在本机读，不要提交/回显明文）
 $patch = Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\cordis.patch.yml" -Encoding UTF8 -Raw
