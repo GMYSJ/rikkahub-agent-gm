@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### 2026-11-19（第十轮）— 内置起点：远程节点数据层 + 设置入口
+
+用户明确：最终形态是内置进 RikkaHub，桥只是过渡验证；移植目标 DSH Mobile → DSH-Go。
+
+**新增**：
+- `RemoteNode.kt`：节点模型；`toMcpServerConfig()` / `toOpenAIProvider()` 一键生成标准配置
+- `RemoteNodeSync.kt`：幂等同步器（按 id 覆盖），把节点写进原生 mcpServers / providers
+- `SettingRemoteNodePage.kt`：设置页（IP/端口/token/工具与模型开关）
+- `PreferencesStore.kt`：`remoteNodes` 字段 + 独立 DataStore key
+- `RouteActivity.kt` / `SettingPage.kt`：导航与入口
+
+**关键取舍（避坑）**：
+- 不新增 ProviderSetting 子类：那要改 5 处会编译失败的 `when`
+  + ProviderConfigure 7 处，无编译链风险不可控。复用 OpenAI Provider + baseUrl。
+- 不自动勾选 assistant：保留 `McpManager.kt:110` 的原有安全门。
+
+**验证限制**：本机无 java/gradle，未编译。静态核对 10/10 符号 + 括号配对 + 导航/持久化各三处。
+
+---
+
 ### 2026-11-19（第九轮）— 模型门面真机验证通过
 
 **真实调用发现并修复**：

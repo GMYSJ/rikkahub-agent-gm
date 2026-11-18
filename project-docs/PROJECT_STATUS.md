@@ -138,6 +138,35 @@
 **但记录在这**：如果以后想换回，从
 `package.json.bak-bridge-20261119-002539` 恢复 bundles 即可。
 
+## 内置进展（阶段：数据层 + 设置入口已落地，待编译验证）
+
+按用户 2026-11-19 的明确要求，开始把桥验证过的协议**内置进 RikkaHub**。
+
+**已落地代码**：
+
+| 文件 | 作用 |
+|---|---|
+| `data/remote/RemoteNode.kt` | 节点数据模型；一键生成 `McpServerConfig.StreamableHTTPServer` + `ProviderSetting.OpenAI` |
+| `data/remote/RemoteNodeSync.kt` | 幂等同步器：按 id 覆盖，不重复追加 |
+| `data/datastore/PreferencesStore.kt` | `Settings.remoteNodes` + 独立 DataStore key（写入/读取，缺省空列表） |
+| `ui/pages/setting/SettingRemoteNodePage.kt` | 设置页：填 IP/端口/token，保存即同步 |
+| `RouteActivity.kt` | Screen + entry + import 三处导航 |
+| `SettingPage.kt` | 设置入口（复用 `ServerStack01` 图标） |
+
+**关键设计取舍**：
+- **不新增 ProviderSetting 子类**——那要改 5 处会编译失败的 `when` + ProviderConfigure 7 处，本机无编译链不可控。
+  直接复用 OpenAI Provider（`baseUrl` 指向桥的 `/llm/v1`）。
+- **不侵入 ChatService 工具装配**——MCP server 加入 `settings.mcpServers` 后由原生链路处理。
+- **不自动勾选 assistant**——`McpManager.kt:110` 要求 `id in assistant.mcpServers`，
+  这是产品故意的安全门，用户仍需去 Assistant → MCP 勾选 `dsh_<slug>`。
+
+**验证限制（重要）**：本机无 java/gradle，**未编译**。只做了静态校验：
+- 10/10 引用符号在源码中真实存在
+- 三个新文件括号配对全部正确
+- 导航三处、持久化三处均已核对
+
+**下一步**：在 CI 上跑 `:app:assembleRelease` 验证编译（需 git push，当前无远程配置）。
+
 ## Git 版本控制 ✅
 
 2026-11-19 安装了便携版 **MinGit 2.56.1** 于 `D:\AAAdeepseek\工作区\tools\git`
