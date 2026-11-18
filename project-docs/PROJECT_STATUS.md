@@ -160,12 +160,26 @@
 - **不自动勾选 assistant**——`McpManager.kt:110` 要求 `id in assistant.mcpServers`，
   这是产品故意的安全门，用户仍需去 Assistant → MCP 勾选 `dsh_<slug>`。
 
-**验证限制（重要）**：本机无 java/gradle，**未编译**。只做了静态校验：
+**编译验证：✅ 已通过 GitHub Actions 云端编译**
+
+用户提供了自己的仓库 `GMYSJ/rikkahub-agent-gm` 与 PAT，推送到新分支
+`verify/inbuilt-20261119` 触发 CI：
+
+| run | 结果 | 说明 |
+|---|---|---|
+| 44361664013 | failure | **与代码无关**：ZIP 快照缺子模块 gitlink，CMake 找不到 llama.cpp |
+| 44362631085 | **success** | 补回 gitlink 后，`assembleRelease` + R8 全过（约 18 分钟） |
+
+**master 分支完全未动**（SHA 仍是 `931345c`），全部改动只在验证分支。
+
+过程中额外发现并修复一个工程问题：ZIP 快照的两个子模块目录是空的，
+`git add -A` 忽略了空目录导致 gitlink（mode 160000）丢失；
+已用 `git update-index --add --cacheinfo` 补回（提交 `7a8f27e`）。
+
+**静态校验（此前做的，作为补充证据）**：
 - 10/10 引用符号在源码中真实存在
 - 三个新文件括号配对全部正确
 - 导航三处、持久化三处均已核对
-
-**下一步**：在 CI 上跑 `:app:assembleRelease` 验证编译（需 git push，当前无远程配置）。
 
 ## Git 版本控制 ✅
 

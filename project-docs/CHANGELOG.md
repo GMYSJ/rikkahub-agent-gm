@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### 2026-11-19（第十一轮）— 首次 CI 编译验证：抓到 ZIP 快照的子模块陷阱
+
+**背景**：用户给了自己的仓库 `GMYSJ/rikkahub-agent-gm` 与 PAT，
+推到新分支 `verify/inbuilt-20261119` 触发云端编译（master 未动）。
+
+**第一次 CI 失败**（run 44361664013），但**与内置代码无关**：
+```
+:llama-cpp:configureCMakeRelWithDebInfo[arm64-v8a] FAILED
+CMake Error at CMakeLists.txt:27 (add_subdirectory):
+  .../llama-cpp/native/llama.cpp  (目录为空)
+```
+根因 ZIP 快照的子模块目录是空的，`git add -A` 忽略了空目录，
+gitlink（mode 160000）没进索引 → CI checkout 拿不到子模块内容。
+
+**修复**：用 GitHub API 取上游 master 的子模块 SHA，
+`git update-index --add --cacheinfo 160000,<sha>,<path>` 补回两个 gitlink
+（llama.cpp `596a579`、material3 `6fd88eb`），提交 `7a8f27e` 重推。
+
+**验证分支**：`verify/inbuilt-20261119`（master 完全未动）。
+PAT 只用于临时 URL push，未写 `.git/config`、未进任何文件。
+
+**第二次 CI：✅ success**（run 44362631085，约 18 分钟）
+补回子模块 gitlink 后，`:app:assembleRelease` + R8 全部通过——
+**内置代码通过了完整云端编译验证**。
+
+master 分支完全未动（SHA `931345c`），改动只在 `verify/inbuilt-20261119`。
+
+---
+
 ### 2026-11-19（第十轮）— 内置起点：远程节点数据层 + 设置入口
 
 用户明确：最终形态是内置进 RikkaHub，桥只是过渡验证；移植目标 DSH Mobile → DSH-Go。
