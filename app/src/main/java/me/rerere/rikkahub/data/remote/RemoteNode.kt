@@ -172,7 +172,7 @@ data class RemoteNode(
                 val host = uri.host ?: ""
                 val port = if (uri.port > 0) uri.port else if (uri.scheme == "https") 443 else 80
                 host to port
-            } catch { "" to 0 }
+            } catch (e: Exception) { "" to 0 }
         }
     }
 }
