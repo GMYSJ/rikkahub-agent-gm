@@ -144,12 +144,19 @@ export function chunkToSse(chunk, ctx) {
     pendingUsage = normalizeUsage(chunk.usage);
   } else if (type === 'finish') {
     finishReason = mapFinishReason(chunk.reason);
+    // finish reason 可能是 {kind:'error', failure:{message,code}}（DSH 把
+    // 模型调用失败如 429 限流也包成 finish 帧）。必须把错误显示出来，
+    // 否则用户只看到空回复，完全不知道是限流/密钥失效。
+    const errText = extractFinishError(chunk.reason);
     // 若整轮没有任何正文（text-delta），但累积了 reasoning，
     // 才把它一次性作为 content 发出去——避免空回复，又不刷屏。
     const buffered = ctx.reasoningBuffer || '';
     if (!ctx.hasText && buffered !== '') {
       frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: buffered } }));
       ctx.reasoningBuffer = '';
+    }
+    if (errText !== null) {
+      frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: `[模型错误] ${errText}` } }));
     }
     frames.push(sseFrame({
       id: ctx.id,
@@ -165,6 +172,27 @@ export function chunkToSse(chunk, ctx) {
 }
 
 /**
+ * 从 DSH 的 finish reason 里提取错误文本。
+ *
+ * reason 可能是字符串（stop/length...），也可能是
+ * `{kind:'error', failure:{message, code}}`（模型调用失败，如 429 限流）。
+ *
+ * @param {unknown} reason - DSH finish reason。
+ * @returns {string | null} 错误说明，或 null（正常结束）。
+ */
+export function extractFinishError(reason) {
+  if (reason === null || typeof reason !== 'object') return null;
+  const r = /** @type {any} */ (reason);
+  if (r.kind !== 'error') return null;
+  const failure = r.failure ?? {};
+  const message = typeof failure.message === 'string' && failure.message !== ''
+    ? failure.message
+    : String(r.kind);
+  const code = typeof failure.code === 'string' && failure.code !== '' ? `[${failure.code}] ` : '';
+  return `${code}${message}`;
+}
+
+/**
  * DSH FinishReason → OpenAI finish_reason。
  *
  * OpenAI 标准值：stop / length / tool_calls / content_filter / function_call
@@ -174,6 +202,7 @@ export function chunkToSse(chunk, ctx) {
  */
 export function mapFinishReason(reason) {
   if (reason === null || reason === undefined) return 'stop';
+  if (typeof reason === 'object' && (/** @type {any} */ (reason)).kind === 'error') return 'stop';
   const raw = String(reason);
   // DSH 常见值：stop / complete / length / max_tokens / tool_calls / cancelled / error
   if (raw === 'tool_calls' || raw === 'tool-call' || raw === 'tool_use') return 'tool_calls';

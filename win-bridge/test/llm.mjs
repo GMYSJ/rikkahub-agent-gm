@@ -14,6 +14,7 @@ import {
   mapFinishReason,
   normalizeUsage,
   openAiRequestToGenerateOptions,
+  extractFinishError,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -156,6 +157,18 @@ test('finish 带 finish_reason', () => {
     id: 'x', model: 'm', roleSent: true,
   });
   assert.equal(parseFrame(r.frames[0]).choices[0].finish_reason, 'stop');
+});
+test('finish reason 为 error 对象时提取错误文本（429 限流等）', () => {
+  const reason = {
+    kind: 'error',
+    failure: { code: 'QUOTA', message: '429: 被限流，将在 22:12 重置' },
+  };
+  const text = extractFinishError(reason);
+  assert.ok(text !== null);
+  assert.match(text, /QUOTA/);
+  assert.match(text, /限流/);
+  assert.equal(extractFinishError('stop'), null, '正常结束不产生错误');
+  assert.equal(extractFinishError(null), null);
 });
 test('finish 合并暂存的 usage', () => {
   const u = chunkToSse({ type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } }, {

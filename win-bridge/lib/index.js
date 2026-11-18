@@ -49,6 +49,7 @@ import {
   openAiRequestToGenerateOptions,
   normalizeUsage,
   mapFinishReason,
+  extractFinishError,
 } from './llm.js';
 
 /**
@@ -790,7 +791,11 @@ export function apply(ctx, config) {
                 },
               });
             } else if (chunk?.type === 'usage') usage = normalizeUsage(chunk.usage);
-            else if (chunk?.type === 'finish') finishReason = mapFinishReasonSafe(chunk.reason);
+            else if (chunk?.type === 'finish') {
+              finishReason = mapFinishReasonSafe(chunk.reason);
+              const errText = extractFinishError(chunk.reason);
+              if (errText !== null) content += (content === '' ? '' : '\n') + `[模型错误] ${errText}`;
+            }
           }
           lastLlmChunks = { model: modelName, chunks: chunkCounts, finishReason: firstFinishReason, contentLen: content.length, reasoningLen: reasoning.length };
           // 若整轮没有正文但有思考，一次性兜底（与流式路径一致）
