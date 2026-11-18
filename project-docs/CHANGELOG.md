@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### 2026-11-19（第九轮）— 模型门面真机验证通过
+
+**真实调用发现并修复**：
+1. `Message.content` 必须是 `ContentBlock[]`（`dsh-llm/src/message.ts:143`），
+   裸字符串导致流正常结束但 content 为空
+2. `GenerateOptions` 需 `{provider, model}` 双字段；`model` 支持 `provider/model` 拆分
+3. `LlmProviderInfo` 真实字段是 `{id, name}`（此前假设错）
+4. system 消息转到 `GenerateOptions.system`；assistant/tool 因 source 结构未核实而明确拒绝
+
+**验证结果（deepseek-official / deepseek-v4-flash）**：
+- `/llm/v1/models` 返回 12 个真实 provider
+- 非流式 ASCII → `PONG`、UTF-8 中文 → `收到`
+- 流式 SSE → 文本帧 `OK` + usage finish + `[DONE]`
+
+**排障经验**：`max_tokens` 太小时推理模型的 token 全被 reasoning 消耗，
+正文还没开始就截断——completion_tokens>0 但 content 空时先加大配额。
+
+**这两处修复在提交 `fd6df36`，测试总数维持 185 全绿。**
+
+---
+
 ### 2026-11-19（第八轮）— 模型门面（OpenAI 兼容）+ 目标表述修正
 
 **用户明确**：整个工程仍按基准主提示词推进，**最终形态是内置**；

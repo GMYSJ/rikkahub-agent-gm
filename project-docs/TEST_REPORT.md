@@ -96,6 +96,29 @@
 
 **结论**：桥已达到可用状态，手机 Agent 能真正执行电脑 DSH 的工具。
 
+### 真机/真实模型验证：模型门面（2026-11-19）
+
+**两个真实 bug（都只有真调才暴露）**：
+
+1. `Message.content` 必须是 `ContentBlock[]`（`dsh-llm/src/message.ts:143`），
+   传裸字符串 → 流正常结束但 content 为空。
+2. `GenerateOptions` 需要 `{provider, model}` 两个字段；
+   `LlmProviderInfo` 真实字段是 `{id, name}`（我最初假设 `{provider, name}`，错的）。
+3. `max_tokens` 太小时，推理模型的 token 全被 reasoning 消耗，
+   正文还没开始就截断（这是推理模型特性，不是 bug）。
+
+**验证结果（deepseek-official / deepseek-v4-flash）**：
+
+| 测试 | 结果 |
+|---|---|
+| `GET /llm/v1/models` | ✅ 12 个真实 provider 路由，无虚构 |
+| 非流式 ASCII "Reply with exactly: PONG" | ✅ 返回 `PONG` |
+| 非流式 UTF-8 中文 "只回复两个字：收到" | ✅ 返回 `收到` |
+| 流式 SSE "Say OK" | ✅ 文本帧 `OK` + usage finish 帧 + `[DONE]` |
+
+**注意**：PowerShell 直接发 JSON 默认不是 UTF-8，中文会变乱码；
+手机 App 用 UTF-8 无此问题（已在报告里注明正确发送方式）。
+
 ### 复现命令
 
 ```powershell
