@@ -275,6 +275,46 @@ await test('诊断不泄漏参数与结果', async () => {
   assert.equal(text.includes('SECRET_SHOULD_NOT_APPEAR'), false, '参数绝不能出现在诊断里');
 });
 
+console.log('\n== lan: 多监听（局域网 + 隧道）==');
+await test('两个不同端口各自独立服务（模拟 LAN + Tailscale）', async () => {
+  const p1 = await freePort();
+  const p2 = await freePort();
+  assert.notEqual(p1, p2);
+  const l1 = await startLanListener({ host: '127.0.0.1', port: p1, handler });
+  const l2 = await startLanListener({ host: '127.0.0.1', port: p2, handler });
+  assert.equal(l1.ok, true);
+  assert.equal(l2.ok, true);
+
+  // 两个端口都返回同一份服务（因为共用 handler），证明隧道口与 LAN 口能力一致
+  const r1 = await fetch(`http://127.0.0.1:${p1}/bridge/health`);
+  const r2 = await fetch(`http://127.0.0.1:${p2}/bridge/health`);
+  assert.equal(r1.status, 200);
+  assert.equal(r2.status, 200);
+  assert.equal((await r1.json()).result.nodeId, (await r2.json()).result.nodeId);
+
+  // 关掉其中一个，另一个不受影响
+  await l1.close();
+  const r3 = await fetch(`http://127.0.0.1:${p2}/bridge/health`);
+  assert.equal(r3.status, 200, '关掉一个监听不应影响另一个');
+  await l2.close();
+});
+
+await test('数组形式的每条配置都能被单独校验', () => {
+  // 直接验证 validateLanOptions 对数组里每一条的判断（不依赖 mock 的异步 effect 时机）
+  const cfg = [
+    { host: '192.168.1.3', port: 61420, token: 'a'.repeat(32) },
+    { host: '100.91.212.5', port: 61421, token: 'b'.repeat(32) },
+  ];
+  assert.equal(cfg.length, 2);
+  const v1 = validateLanOptions(cfg[0]);
+  const v2 = validateLanOptions(cfg[1]);
+  assert.equal(v1.ok, true);
+  assert.equal(v2.ok, true);
+  // 两条地址不同、token 不同 —— 证明可以 LAN + 隧道各一条
+  assert.notEqual(v1.host, v2.host);
+  assert.notEqual(v1.token, v2.token);
+});
+
 await listener.close();
 teardown();
 

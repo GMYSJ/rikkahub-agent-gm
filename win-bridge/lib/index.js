@@ -266,17 +266,22 @@ export function apply(ctx, config) {
     : 120_000;
 
   /**
-   * 局域网监听配置（可选）。
+   * 独立监听配置（可选），支持多个地址。
    *
-   * 形如 `lan: { host: '192.168.1.3', port: 61420, token: '...' }`。
-   * 不配就是 `null`，只保留回环通道。
+   * 两种写法都兼容：
+   *   单条: lan: { host: '192.168.1.3', port: 61420, token: '...' }
+   *   多条: lan: [ { host: '192.168.1.3', ... }, { host: '100.91.212.5', ... } ]
+   *
+   * 多监听的意义：局域网一条 + Tailscale/EasyTier 一条，
+   * 手机不在家时走隧道照样能用（两者只是 IP 不同，端点与鉴权完全一样）。
    */
-  const lanConfig = (cfg.lan !== null && typeof cfg.lan === 'object' && !Array.isArray(cfg.lan))
-    ? cfg.lan
-    : null;
+  const lanConfigRaw = cfg.lan;
+  const lanConfigs = Array.isArray(lanConfigRaw)
+    ? lanConfigRaw
+    : (lanConfigRaw !== null && typeof lanConfigRaw === 'object' ? [lanConfigRaw] : []);
 
-  /** 局域网监听句柄，启动是异步的，先占位。 */
-  let lanListener = null;
+  /** 所有局域网监听句柄，卸载时统一关闭。 */
+  const lanListeners = [];
 
   /** 本桥注册的工具名前缀，用于把它们从「可暴露清单」里排除。 */
   const REGISTERED_MARKER = 'mcp__';
@@ -873,7 +878,7 @@ export function apply(ctx, config) {
           },
           totals: { calls: total, succeeded, failed: total - succeeded },
           recent: recentCalls.slice(-20).reverse(),
-          lan: lanListener === null ? null : lanListener.address,
+          lan: lanListeners.map((listener) => listener.address),
         }));
         return;
       }
@@ -966,40 +971,41 @@ export function apply(ctx, config) {
   //
   // 注意：它是**可选**的，且配置不合法时只记日志、不阻断插件启动 ——
   // 因为主通道（回环）本身是可用的，不该因为局域网配置写错就整个废掉。
-  if (lanConfig !== null) {
-    const verdict = validateLanOptions(lanConfig);
+  // 每个地址独立启动；某个失败不影响其它。
+  // 因为主通道（回环）本身是可用的，不该因为某条局域网配置写错就整个废掉。
+  for (const oneLan of lanConfigs) {
+    const verdict = validateLanOptions(oneLan);
     if (!verdict.ok) {
       ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener skipped — ${verdict.reason}`);
-    } else {
-      // 独立监听用**它自己的** token（不与主 token 混用），
-      // 这样即使主 token 泄露，局域网入口仍是独立凭据。
-      // handler 与主入口共用同一份实现，只是换一套鉴权。
-      const lanHandler = makeBridgeHandler(makeAuthorizer(verdict.token));
-      startLanListener({
-        host: verdict.host,
-        port: verdict.port,
-        handler: lanHandler,
-        log: (message) => ctx.logger?.info?.(message),
-      }).then((started) => {
-        if (!started.ok) {
-          ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener failed — ${started.reason}`);
-          return;
-        }
-        lanListener = started;
-      }).catch((err) => {
-        ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener threw — ${err instanceof Error ? err.message : String(err)}`);
-      });
+      continue;
     }
+    // 独立监听用**它自己的** token（不与主 token 混用），
+    // 这样即使主 token 泄露，局域网入口仍是独立凭据。
+    // handler 与主入口共用同一份实现，只是换一套鉴权。
+    const lanHandler = makeBridgeHandler(makeAuthorizer(verdict.token));
+    startLanListener({
+      host: verdict.host,
+      port: verdict.port,
+      handler: lanHandler,
+      log: (message) => ctx.logger?.info?.(message),
+    }).then((started) => {
+      if (!started.ok) {
+        ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener failed on ${verdict.host}:${verdict.port} — ${started.reason}`);
+        return;
+      }
+      lanListeners.push(started);
+    }).catch((err) => {
+      ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener threw on ${verdict.host}:${verdict.port} — ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
-  // 统一回收：端点 + 局域网监听 + 所有入方向注册的工具。
+  // 统一回收：端点 + 所有局域网监听 + 所有入方向注册的工具。
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => () => {
       toolOwners.clear();
       remoteNodes.clear();
-      if (lanListener !== null) {
-        lanListener.close().catch(() => { /* 关闭失败不阻断卸载 */ });
-        lanListener = null;
+      for (const listener of lanListeners.splice(0)) {
+        listener.close().catch(() => { /* 关闭失败不阻断卸载 */ });
       }
       for (const dispose of registeredDisposers.splice(0)) {
         try {
