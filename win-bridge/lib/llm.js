@@ -202,11 +202,16 @@ export function openAiRequestToGenerateOptions(body) {
     return { ok: false, reason: '`messages` must be a non-empty array' };
   }
 
+  // provider/model 拆分提前：assistant 消息的 source 需要 provider。
+  const slash = model.indexOf('/');
+  const providerName = slash > 0 && slash < model.length - 1 ? model.slice(0, slash) : model;
+  const modelName = slash > 0 && slash < model.length - 1 ? model.slice(slash + 1) : model;
+
   /** @type {Array<object>} */
   const messages = [];
   /** @type {string[]} */
   const systemParts = [];
-  for (const m of raw.messages) {
+  for (const [idx, m] of raw.messages.entries()) {
     if (m === null || typeof m !== 'object') {
       return { ok: false, reason: 'each message must be an object' };
     }
@@ -227,38 +232,66 @@ export function openAiRequestToGenerateOptions(body) {
       contentBlocks = [{ type: 'text', text: JSON.stringify(rawContent ?? '') }];
     }
 
+    // 消息的稳定 id：OpenAI 客户端不一定给，缺失时按序号生成一个。
+    // DSH 的 MessageBase 要求 id（MessageId），同一批内必须唯一。
+    const msgId = typeof m.id === 'string' && m.id !== ''
+      ? m.id
+      : `bridge-msg-${idx}`;
+
     if (role === 'user') {
       // RequestUserInput 只接受 {role:'user', content}（dsh-llm/src/types.ts:531-536），
-      // 不能带 id / source —— 这是唯一无需猜测 source 结构的角色。
+      // 不能带 id / source。
       messages.push({ role: 'user', content: contentBlocks });
     } else if (role === 'system') {
-      // DSH 的 system 消息需要 source 字段，结构复杂且随版本变化。
-      // 保守做法：把 system 文本拼进 GenerateOptions.system（README:581 确认该字段存在），
-      // 不构造 system 消息本身。
+      // system 消息转为 GenerateOptions.system（README:581 确认字段存在），
+      // 不构造 system 消息本身（它需要 source）。
       const text = contentBlocks.map((b) => (typeof b.text === 'string' ? b.text : '')).join('');
       systemParts.push(text);
-    } else {
-      // assistant / tool 消息也需要 source（含 modelId / toolCallId 等具体结构）。
-      // 在没核实结构前，宁可拒绝，也不要猜一个能过类型转换但运行时静默失败的形状。
-      return { ok: false, reason: `role "${role}" is not supported in v1 (use user messages and system)` };
+    } else if (role === 'assistant') {
+      // AssistantMessage = { id, role:'assistant', content, source }（dsh-llm/src/message.ts:167-170）
+      // source = { kind:'model', provider, model }（同文件 :24-26）
+      const providerKey = typeof providerName === 'string' ? providerName : model;
+      messages.push({
+        id: msgId,
+        role: 'assistant',
+        content: contentBlocks,
+        source: { kind: 'model', provider: providerKey, model: modelName },
+      });
+      // 若客户端带 tool_calls，转成 DSH 的 tool-call 内容块，
+      // 保证多轮工具调用链完整（主提示词明确要求）。
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls) {
+          const fn = tc?.function ?? {};
+          messages.push({
+            id: `${msgId}-call-${String(tc?.id ?? '')}`,
+            role: 'assistant',
+            content: [{
+              type: 'tool-call',
+              callId: String(tc?.id ?? ''),
+              name: String(fn.name ?? ''),
+              arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+            }],
+            source: { kind: 'model', provider: providerKey, model: modelName },
+          });
+        }
+      }
+    } else if (role === 'tool') {
+      // ToolResultMessage = { id, role:'tool', content, source:{kind:'tool',callId}, toolCallId, isError? }
+      // （dsh-llm/src/message.ts:173-180, 29-32）
+      const callId = typeof m.tool_call_id === 'string' ? m.tool_call_id : '';
+      messages.push({
+        id: msgId,
+        role: 'tool',
+        content: contentBlocks,
+        source: { kind: 'tool', callId },
+        toolCallId: callId,
+        isError: false,
+      });
     }
   }
 
   /** @type {object} */
-  const options = { model, messages };
-  // DSH 的 GenerateOptions 需要 { provider, model } 两个字段：
-  //   provider = 已注册的路由键（如 workbuddy / deepseek-official）
-  //   model    = 该路由下的真实模型 id
-  // RikkaHub 习惯传 "provider/model" 形式的字符串，这里拆开；
-  // 若没有斜杠，则 provider 与 model 用同一个值（调用方需自行保证正确）。
-  const slash = model.indexOf('/');
-  if (slash > 0 && slash < model.length - 1) {
-    options.provider = model.slice(0, slash);
-    options.model = model.slice(slash + 1);
-  } else {
-    options.provider = model;
-    options.model = model;
-  }
+  const options = { model: modelName, messages, provider: providerName };
   if (systemParts.length > 0) options.system = systemParts.join('\n');
   if (typeof raw.temperature === 'number') options.temperature = raw.temperature;
   if (typeof raw.max_tokens === 'number') options.maxTokens = raw.max_tokens;

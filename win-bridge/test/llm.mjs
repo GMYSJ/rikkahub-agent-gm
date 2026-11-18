@@ -233,10 +233,36 @@ test('缺 messages 被拒', () => {
 test('空 messages 被拒', () => {
   assert.equal(openAiRequestToGenerateOptions({ model: 'm', messages: [] }).ok, false);
 });
-test('assistant/tool 角色被明确拒绝（不猜 source 结构）', () => {
-  assert.equal(openAiRequestToGenerateOptions({
-    model: 'm', messages: [{ role: 'assistant', content: 'x' }],
-  }).ok, false);
+test('assistant 消息转成 DSH 完整结构（多轮对话必需）', () => {
+  const r = openAiRequestToGenerateOptions({
+    model: 'workbuddy/deepseek-v4.1-flash',
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ],
+  });
+  assert.equal(r.ok, true);
+  const a = r.options.messages.find((m) => m.role === 'assistant');
+  assert.ok(a !== undefined);
+  assert.equal(a.source.kind, 'model');
+  assert.equal(a.source.provider, 'workbuddy');
+  assert.equal(a.source.model, 'deepseek-v4.1-flash');
+  assert.deepEqual(a.content, [{ type: 'text', text: 'hello' }]);
+});
+test('tool 消息转成 DSH ToolResultMessage 结构', () => {
+  const r = openAiRequestToGenerateOptions({
+    model: 'm',
+    messages: [
+      { role: 'assistant', tool_calls: [{ id: 'call_1', function: { name: 'fs_read', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'done' },
+    ],
+  });
+  assert.equal(r.ok, true);
+  const t = r.options.messages.find((m) => m.role === 'tool');
+  assert.ok(t !== undefined);
+  assert.equal(t.source.kind, 'tool');
+  assert.equal(t.toolCallId, 'call_1');
+  assert.equal(t.source.callId, 'call_1');
 });
 test('非字符串 content 降级成文本块而不丢消息', () => {
   const r = openAiRequestToGenerateOptions({
