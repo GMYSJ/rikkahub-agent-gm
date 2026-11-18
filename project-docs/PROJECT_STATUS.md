@@ -202,6 +202,33 @@
 
 **两个面都已在真机验证：工具调用 + 模型连接。**
 
+### 局域网之外：Tailscale 通道已打通并验证（2026-11-19）
+
+桥从单监听扩展为**多监听**（提交 `39d021a`，测试 185→187）：
+
+```
+lan:
+  - { host: 192.168.1.3,   port: 61420, token: <LAN> }       # 家里
+  - { host: 100.91.212.5,  port: 61421, token: <Tailscale> } # 外出
+```
+
+每个通道**独立 token**、共用同一 handler，某个失败不影响其它。
+
+**Tailscale 通道实测全绿**：
+- 无 token → 401 ✅
+- 带 token → 29 个工具 ✅
+- MCP initialize ✅
+- `/llm/v1/models` → 38 个模型（workbuddy 15）✅
+
+**手机配置**：设置 → 远程 DSH 节点，把 IP 改成 `100.91.212.5`、端口 `61421`、
+token 用 Tailscale 那把（见 profile 的第三个 token）。手机上装了 Tailscale 并登录同一账号即可。
+
+**其它通道现状**：
+- **EasyTier**：进程在跑但无虚拟网卡 IP（GUI 模式，未建 tun），暂不可用
+- **cpolar**：主提示词说用户有通道，但本次会话未见监听；需要时可再接（HTTP 反代到 61420）
+- **Tailscale Funnel**：已知不可用（主提示词明确），不用
+- 当前 Tailscale 是 **tailnet 内直连**（需两端都登录），不是公网开放——这是最安全的形态
+
 ## Git 版本控制 ✅
 
 2026-11-19 安装了便携版 **MinGit 2.56.1** 于 `D:\AAAdeepseek\工作区\tools\git`
