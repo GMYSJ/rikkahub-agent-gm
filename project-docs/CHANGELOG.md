@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### 2026-11-19（第四轮）— 装 Git + 桥落地真实 DSH + 17 项端到端验证
+
+**1. 安装 Git（便携版，不污染系统）**
+
+- MinGit `2.56.1-64-bit` 解压到 `D:\AAAdeepseek\工作区\tools\git`
+- 已加入用户 PATH（`tools\git\cmd`），新 shell 直接可用
+- 仓库初始化于 `repos/rikkahub-agent-gm`，基线提交 `c4e6e87`，跟踪 **1947 个文件**，`.git` 47 MB
+- 仓库级身份 `rikkahub-agent-gm dev <dev@localhost>`，不碰全局配置
+- `core.autocrlf=false`（避免 CJK 与二进制被改写）、`core.longpaths=true`
+
+**2. 桥装进 desktop profile 并启用**
+
+- `plugin_manager install_bundle` → `application: applied`
+- 安装后**回归核对**：原有 15 个 bundles 一个不少（现 16），
+  `im-qqbot` 的 `appId`/`appSecret` 未动，WorkBuddy 文件时间戳未变
+- 启用在 profile `cordis.patch.yml` 里按 id 覆盖 bundle 的 `enabled: false`
+- 生成 64 字符随机 token，**只存 profile，不进 git**
+
+**3. 真实 DSH 环境端到端验证（17 项全绿）**
+
+重启后端口 `61412`，逐项验证：
+
+| 关键证据 | 结果 |
+|---|---|
+| `/tools` 从真实 `ctx.tools` 读到工具 | ✅ **18 个** |
+| MCP `initialize` / `tools/list` / `tools/call` | ✅ 全通 |
+| `memory_list` 真实执行 | ✅ 返回记忆库数据 |
+| **双向闭环**：DSH → 桥 → 远端节点 → 回传 | ✅ `{"battery":87,"detail":true}` |
+| 401 / 403 / 508 / 防自我回显 | ✅ 真实环境全部生效 |
+
+**4. 测试中发现的真实缺陷**
+
+首次跨节点测试用 `baseUrl` 指向桥自己，回调失败（`unknown tool "sim_battery"`）。
+判读后确认这不是桥的 bug，而是测试设计错误 —— 桥回调过去用的是**原始工具名**，
+而自己从未注册过裸名 `sim_battery`。改用真实两个节点后通过。
+
+这个"失败"反而验证了一条正确设计：**桥存储的是 `(nodeSlug, 原始工具名)`**
+而非限定名，所以远端节点只需实现自己的 `/tools/call`，
+**不需要知道 `mcp__` 前缀规则**。
+
+**5. 新增待办（需要真机或用户操作）**
+
+- 真机验证需手机侧操作，本机无 adb
+- 桥当前只能经 `127.0.0.1` 访问；手机要用必须走移动网关反代或 `dsh-go-workspace` 的 3443
+
+---
+
 ### 2026-11-19（第三轮）— 增加 MCP 兼容端点，手机侧可零代码接入
 
 **新增 `win-bridge/lib/mcp.js`** — 最小 MCP（Streamable HTTP）服务端实现

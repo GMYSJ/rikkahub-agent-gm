@@ -11,7 +11,102 @@
 | `test/e2e.mjs` | 25 | ✅ |
 | `test/host-load.mjs` | 12 | ✅ |
 | `test/mcp.mjs` | 29 | ✅ |
-| **合计** | **126** | **全绿** |
+| **离线合计** | **126** | **全绿** |
+| **真实 DSH 端到端** | **17 项** | **全绿**（见下） |
+
+## 2026-11-19（第四轮）— 真实 DSH 环境端到端验证
+
+**这是第一次在真实运行中的 DSH 上验证，此前全部是脱宿主测试。**
+
+### 环境
+
+| 项 | 值 |
+|---|---|
+| DSH | `0.2.2-rc.5`，重启后端口 `61412` |
+| 安装方式 | `plugin_manager install_bundle`，`application: applied` |
+| 插件路径 | `node_modules/dsh-mobile-bridge` → Junction → 工作区 `win-bridge` |
+| 鉴权 | 64 字符随机 token，仅存 profile `cordis.patch.yml`，不进 git |
+
+### 17 项实测结果
+
+| # | 项目 | 预期 | 实际 |
+|---|---|---|---|
+| 1 | `/health` 探活 | 200 | ✅ `{"ok":true,"protocolVersion":1,"nodeId":"windows-dsh","authRequired":true}` |
+| 2 | 无 token 访问 `/tools` | 401 | ✅ 401 |
+| 3 | 带 token 访问 `/tools` | 200 + 工具清单 | ✅ **18 个工具**，真的从 `ctx.tools` 读到 |
+| 4 | MCP `initialize` | 版本与 capabilities | ✅ `dsh-mobile-bridge v0.1.0` / `2025-06-18` |
+| 5 | MCP `notifications/initialized` | 202 空正文 | ✅ 202，长度 0 |
+| 6 | MCP `tools/list` | 工具数组 | ✅ 18 个，`inputSchema.type=object` |
+| 7 | MCP `tools/call` 执行 `memory_list` | 真实返回 | ✅ **真的执行了**，返回记忆库内容 |
+| 8 | 原生 `/tools/call` 执行同一工具 | 成功 | ✅ `ok=True` |
+| 9 | 跳数达上限 | 508 | ✅ 508 hop_limit |
+| 10 | 调 `mcp__` 前缀工具 | 403 | ✅ 403 forbidden |
+| 11 | 错误 token | 401 | ✅ 401 |
+| 12 | `/tools` 不含 `mcp__` 工具 | 无 | ✅ 无 |
+| 13 | 反向注册工具 | accepted | ✅ 2 个 accepted |
+| 14 | `/nodes` 可见 | 列出节点 | ✅ `phone-sim` 工具数 2 |
+| 15 | 注册后仍不自我回显 | 仍 18 个 | ✅ 仍 18 |
+| 16 | **跨节点真实回调** | 拿到远端数据 | ✅ **`{"battery":87,"detail":true}`** |
+| 17 | 全端点清单 | 6 个都活 | ✅ health/tools/nodes/tools/call/register/mcp 全 200 或预期码 |
+
+### 第 16 项是最重要的一条
+
+这是**完整双向闭环**的证明：
+
+```
+真实 DSH 的模型/工具面
+    ↓ ctx.tools.execute()
+桥的 Tool.execute()
+    ↓ callRemoteTool()
+POST http://127.0.0.1:65512/phone-bridge/tools/call   ← 假手机节点
+    ↓ 返回 {battery:87}
+桥旋转结果
+    ↓
+MCP tools/call 返回 {"battery":87,"detail":true}
+```
+
+**测试中发现的真实缺陷**：第一次用 `baseUrl` 指向桥自己时，回调失败
+（`unknown tool "sim_battery"`）——因为桥回调过去用的是**原始工具名**，
+而自己没注册过这个名字。这不是 bug，是测试设计错了；改用真实的两个节点后立刻通过。
+
+它反过来说明一个正确性：桥记住的是 **`(nodeSlug, 原始工具名)`** 而非限定名，
+所以远端节点只需实现自己的 `/tools/call` 即可，不需要知道 `mcp__` 前缀规则。
+
+### 回归检查（确认没破坏已有功能）
+
+| 项 | 结果 |
+|---|---|
+| 原有 15 个 bundles | ✅ 一个不少，现 16 个 |
+| `im-qqbot` 的 `appId`/`appSecret` | ✅ 未动（L302/L303） |
+| WorkBuddy 插件文件时间戳 | ✅ 11/18 21:38，未变 |
+| 三个内置 `@deepseek-ai/*` 包 | ✅ 从 DSH 安装目录解析，不在 profile node_modules（正常） |
+
+### 复现命令
+
+```powershell
+# 端口每次重启变，先查
+$procs = Get-Process 'DeepSeek Harness'
+$port = (Get-NetTCPConnection -State Listen | Where-Object { $_.OwningProcess -in $procs.Id -and $_.LocalAddress -eq '127.0.0.1' } | Select-Object -First 1).LocalPort
+
+# 从 profile 的 patch 里读出桥的 Bearer 令牌（只在本机读，不要提交/回显明文）
+$patch = Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\cordis.patch.yml" -Encoding UTF8 -Raw
+$token = [regex]::Match($patch, "token:\s*'([0-9a-f]{64})'").Groups[1].Value
+$h = @{ Authorization = "Bearer $token"; 'content-type' = 'application/json' }
+
+Invoke-RestMethod "http://127.0.0.1:$port/dsh-mobile-bridge/tools" -Headers $h
+```
+
+> 注：`token` 只存在于 profile 的 `cordis.patch.yml`，不进入本仓库。
+> 本报告只记录"令牌长度 64"，不记录任何真实值。
+
+### 未验证（诚实清单）
+
+- [ ] **真实 Android 手机**接入（本机无 adb，无可用调试通道）
+- [ ] 跨局域网 / cpolar 隧道的连通性（只在 loopback 验证过）
+- [ ] 手机侧 `McpManager` 对真实 MCP 端点的兼容（已按 `StreamableHttpClientTransport` 语义实现，但未用真机验证）
+- [ ] 并发压力与长时间运行
+- [ ] 真实模型的完整 Agent 回合（只验证了工具单次调用）
+
 
 ## 2026-11-19（第三轮）— MCP 兼容端点
 

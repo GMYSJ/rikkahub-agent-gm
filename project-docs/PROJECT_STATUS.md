@@ -5,7 +5,11 @@
 
 ## 当前阶段
 
-**阶段 0 完成 · 阶段 1 完成 · 阶段 3 已开工（DSH 侧已落地并测试通过）**
+**阶段 0 完成 · 阶段 1 完成 · 阶段 3 DSH 侧已装机并实测通过**
+
+> **2026-11-19 重大进展**：桥已装进 desktop profile 并启用，
+> 在真实 DSH 上完成 17 项端到端验证（含双向闭环），全部通过。
+> 详见 `TEST_REPORT.md` 第四轮。
 
 ## 项目目标
 
@@ -68,6 +72,32 @@
 （`McpSessionRegistry.kt:466-478` 支持 `StreamableHttpClientTransport`），
 所以手机侧指向 `<base>/mcp` 就能用，**不需要写任何 Kotlin 代码**。
 
+### 阶段 3 当前实测状态 ✅
+
+桥已装进 desktop profile（`install_bundle`，`application: applied`），
+重启后端口 `61412`，在**真实 DSH** 上验证 17 项全绿：
+
+- `/tools` 从真实 `ctx.tools` 读到 **18 个工具**
+- MCP 握手 → `tools/list` → `tools/call` 全链路通
+- `memory_list` 真实执行并返回记忆库数据
+- **双向闭环**：DSH → 桥 → 远端节点 → 回传 `{"battery":87}` ✅
+- 安全防护（401/403/508/防自我回显）在真实环境全部生效
+- 原有 15 个 bundles 一个不少，`im-qqbot` 凭据未动
+
+## Git 版本控制 ✅
+
+2026-11-19 安装了便携版 **MinGit 2.56.1** 于 `D:\AAAdeepseek\工作区\tools\git`
+（已加入用户 PATH，不进项目仓库）。
+
+仓库已初始化，基线提交 `c4e6e87`，跟踪 1947 个文件。
+
+```powershell
+# 每次新 shell 直接用即可（已写入用户 PATH）
+cd D:\AAAdeepseek\工作区\repos\rikkahub-agent-gm
+git log --oneline
+git status
+```
+
 ## 源码模块清单（来自 settings.gradle.kts）
 
 ```
@@ -77,24 +107,24 @@
 
 ## 待办（下一步，按优先级）
 
-### 最高优先（最快闭环，零代码）
-- [ ] 装进 profile 并启用：
-      1. `plugin_manager install_bundle` → `target` = `win-bridge` 绝对路径
-      2. 把 `plugin-mobile-bridge` 行的 `enabled` 改 `true`，配 `token`
-      3. 重启 `schtasks /Run /TN "DSH静默重启"`
-      4. 手机 RikkaHub → 设置 → MCP → 加 `streamable-http` → `https://<电脑>:<port>/dsh-mobile-bridge/mcp`
-      5. **务必在 Assistant → MCP 里勾选该 server**
-- [ ] 实测调一个只读工具，记为阶段 3 的首个真实证据
+### 已完成（本轮）
+- [x] 安装 Git 并初始化仓库（基线提交 `c4e6e87`）
+- [x] `install_bundle` 装桥 + profile 启用 + 重启
+- [x] 真实 DSH 上 17 项端到端验证（含双向闭环）
 
-### 次优先
-- [ ] 桥加 `/llm/v1/chat/completions` 门面（DSH **不提供** OpenAI 兼容端点，必须自己包）
-- [ ] 手机侧 `/register` 反方向（电脑调手机工具）需手机侧有桥端点 → 这块才需要写 Kotlin
+### 下一优先
+- [ ] **真机验证**：手机 RikkaHub → MCP → `streamable-http` →
+      填 `https://<电脑局域网IP>:<端口>/dsh-mobile-bridge/mcp` + Bearer token
+      —— 需要你操作（本机无 adb）
+- [ ] 让桥监听局域网地址（当前 DSH webServer 只绑 `127.0.0.1`，
+      手机要访问必须经移动网关反代，或用 `dsh-go-workspace` 的 3443 通道）
+- [ ] 桥加 `/llm/v1/chat/completions` 门面
 - [ ] 文件传输（分块/断点续传/完整性校验）
 - [ ] CI 加测试步骤
 
 ### 待用户决定
-- [ ] 是否现在就装进 profile 并重启做联调（会中断当前会话约 20 秒）
-- [ ] 是否需要 Git（当前无 git，改动无法版本化）
+- [ ] 是否把 `.tmp/` 下两份调研报告纳入仓库（目前未跟踪）
+- [ ] 是否给桥配局域网可达的入口（涉及移动网关配置，需谨慎）
 
 ## 基线事实
 
