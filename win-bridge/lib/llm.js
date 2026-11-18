@@ -108,9 +108,20 @@ export function chunkToSse(chunk, ctx) {
       frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { role: 'assistant', content: '' } }));
       roleSent = true;
     }
-    // reasoning 不输出文本，但发一个空 content 帧保持流活性。
-    const text = type === 'text-delta' ? (chunk.text ?? '') : '';
-    frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: text } }));
+    const text = chunk.text ?? '';
+    if (type === 'text-delta') {
+      frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: text } }));
+    } else {
+      // reasoning-delta：推理模型（如 workbuddy 系）经常只吐 reasoning，
+      // 之前完全丢弃会导致"流正常结束但 content 为空"。
+      // 同时送 reasoning_content（标准扩展字段）与 content（兜底确保有正文）：
+      // 严格客户端读 content，支持思考的客户端读 reasoning_content。
+      frames.push(sseFrame({
+        id: ctx.id,
+        model: ctx.model,
+        delta: { reasoning_content: text, content: text },
+      }));
+    }
   } else if (type === 'tool-call-delta') {
     if (!roleSent) {
       frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { role: 'assistant', content: '' } }));

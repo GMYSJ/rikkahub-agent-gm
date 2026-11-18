@@ -93,14 +93,14 @@ test('text-delta 映射为 content', () => {
   });
   assert.equal(parseFrame(r.frames[0]).choices[0].delta.content, '你好');
 });
-test('reasoning-delta 不泄漏思考文本（保守）', () => {
-  const r = chunkToSse({ type: 'reasoning-delta', index: 0, text: '内部思考SECRET' }, {
+test('reasoning-delta 同时送 reasoning_content 与 content（避免空回复）', () => {
+  const r = chunkToSse({ type: 'reasoning-delta', index: 0, text: '思考文本' }, {
     id: 'x', model: 'm', roleSent: true,
   });
   assert.equal(r.frames.length, 1);
-  const frame = r.frames[0];
-  assert.equal(frame.includes('SECRET'), false);
-  assert.equal(parseFrame(frame).choices[0].delta.content, '');
+  const d = parseFrame(r.frames[0]).choices[0].delta;
+  assert.equal(d.reasoning_content, '思考文本');
+  assert.equal(d.content, '思考文本', '推理模型只吐 reasoning 时必须有 content 兜底');
 });
 test('没有 block-start 时 text-delta 自动补 role', () => {
   const r = chunkToSse({ type: 'text-delta', index: 0, text: 'hi' }, {
