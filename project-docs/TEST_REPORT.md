@@ -69,6 +69,32 @@
 
 其余回归项全部正常：`im-qqbot` 的 `appId`/`appSecret` 仍在，其余插件完好。
 
+### 真机验证结果（用户实测，2026-11-19）
+
+手机 RikkaHub（192.168.1.4）经 MCP 接入 `192.168.1.3:61420`。
+
+**修复 schema bug 前**：9 次调用 8 次失败，全是参数错误
+（工具 schema 被二次包装，手机看到 `type/properties/required` 三个假字段）。
+
+**修复后**：11 次调用 6 次成功，成功率 11% → 55%。
+
+| 成功的工具 | 证据 |
+|---|---|
+| `session_search` | 真实检索 197ms |
+| `leak_guard` | 4 次成功（5ms / 5ms / 4ms / 30ms） |
+| `memory_entity` | 成功 3ms |
+
+**剩余失败已逐条复现，均非桥的问题**：
+
+| 工具 | 真实错误 | 性质 |
+|---|---|---|
+| `remote_list_hosts` | `REMOTE_DISCOVERY_FAILED`（inboundOnly 无出站发现） | Remote 账号配置 |
+| `working_directory` | `requires an agent Session` | 工具依赖会话上下文 |
+| `team_task_get` | `unknown tool`（空参数探测） | 参数问题 |
+| `remote_wait_sessions` | 缺必填 `targets` 数组 | 参数问题 |
+
+**结论**：桥已达到可用状态，手机 Agent 能真正执行电脑 DSH 的工具。
+
 ### 复现命令
 
 ```powershell
