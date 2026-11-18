@@ -206,6 +206,75 @@ await test('绑定不存在的地址时明确失败', async () => {
   assert.match(r.reason, /not an address of this machine|EADDRNOTAVAIL|not available/i);
 });
 
+console.log('\n== lan: 诊断端点（证明「调过」而不只是「看见」）==');
+await test('诊断端点返回结构完整的统计', async () => {
+  const res = await fetch(`http://127.0.0.1:${port}/bridge/diagnostics`);
+  const json = await res.json();
+  assert.equal(json.ok, true);
+  // 注意：前面的用例已经调过工具，所以这里不能断言 calls === 0，
+  // 只能断言结构完整、计数自洽。
+  assert.equal(typeof json.result.totals.calls, 'number');
+  assert.equal(typeof json.result.totals.succeeded, 'number');
+  assert.equal(typeof json.result.totals.failed, 'number');
+  assert.equal(
+    json.result.totals.calls,
+    json.result.totals.succeeded + json.result.totals.failed,
+    '成功 + 失败 应等于总数',
+  );
+  assert.ok(Array.isArray(json.result.recent));
+});
+await test('调一次工具后诊断有记录', async () => {
+  await fetch(`http://127.0.0.1:${port}/bridge/tools/call`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'echo', arguments: { msg: 'diag' } }),
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/bridge/diagnostics`);
+  const json = await res.json();
+  assert.ok(json.result.totals.calls >= 1, '应至少记录 1 次调用');
+  assert.ok(json.result.totals.succeeded >= 1, '应至少 1 次成功');
+  const recent = json.result.recent[0];
+  assert.equal(recent.tool, 'echo');
+  assert.equal(recent.ok, true);
+  assert.equal(recent.via, 'native');
+  assert.equal(typeof recent.ms, 'number');
+  assert.equal(typeof recent.peer, 'string');
+});
+await test('MCP 调用被记为 via=mcp（能区分走哪条路）', async () => {
+  await fetch(`http://127.0.0.1:${port}/bridge/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'tools/call', params: { name: 'echo', arguments: { msg: 'x' } } }),
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/bridge/diagnostics`);
+  const json = await res.json();
+  assert.ok(json.result.byVia.mcp >= 1, 'MCP 调用应被单独计数');
+  assert.ok(json.result.byVia.native >= 1, '原生调用应被单独计数');
+});
+await test('失败的调用也被记下并带错误码', async () => {
+  await fetch(`http://127.0.0.1:${port}/bridge/tools/call`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'no_such_tool', arguments: {} }),
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/bridge/diagnostics`);
+  const json = await res.json();
+  const failed = json.result.recent.find((c) => c.tool === 'no_such_tool');
+  assert.ok(failed !== undefined, '失败调用应出现');
+  assert.equal(failed.ok, false);
+  assert.equal(typeof failed.errorCode, 'string');
+});
+await test('诊断不泄漏参数与结果', async () => {
+  await fetch(`http://127.0.0.1:${port}/bridge/tools/call`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool: 'echo', arguments: { msg: 'SECRET_SHOULD_NOT_APPEAR' } }),
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/bridge/diagnostics`);
+  const text = await res.text();
+  assert.equal(text.includes('SECRET_SHOULD_NOT_APPEAR'), false, '参数绝不能出现在诊断里');
+});
+
 await listener.close();
 teardown();
 

@@ -52,7 +52,8 @@ Invoke-RestMethod "http://127.0.0.1:$port/dsh-mobile-bridge/health"
 | `POST` | `/dsh-mobile-bridge/tools/call` | 执行工具 |
 | `POST` | `/dsh-mobile-bridge/register` | 远端注册自己的工具 |
 | `GET` | `/dsh-mobile-bridge/nodes` | 查看已注册节点 |
-| **`POST`** | **`/dsh-mobile-bridge/mcp`** | **MCP 兼容端点（推荐手机用这个）** |
+| `GET` | `/dsh-mobile-bridge/diagnostics` | **诊断：最近调用记录与统计** |
+| `POST` | `/dsh-mobile-bridge/mcp` | **MCP 兼容端点（推荐手机用这个）** |
 
 ## 手机侧怎么接（推荐路径）
 
@@ -91,7 +92,33 @@ Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/health"
 # 带令牌列工具
 $t = '你的lan.token'
 Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/tools" -Headers @{ Authorization = "Bearer $t" }
+
+# 【关键】确认手机不只是"看见"工具，而是真的调用过
+Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/diagnostics" -Headers @{ Authorization = "Bearer $t" }
 ```
+
+`/diagnostics` 回答最容易含糊的问题——"看得见工具，但到底调通没有"：
+
+```jsonc
+{
+  "ok": true,
+  "result": {
+    "byVia": { "native": 3, "mcp": 12 },   // 手机走的是 mcp 还是原生端点
+    "totals": { "calls": 15, "succeeded": 14, "failed": 1 },
+    "recent": [                             // 最近 20 次调用（新→旧）
+      { "at": "...", "tool": "memory_list", "ok": true,
+        "ms": 42, "via": "mcp", "peer": "192.168.1.5" }
+    ],
+    "lan": { "host": "192.168.1.3", "port": 61420 }
+  }
+}
+```
+
+`recent` 只记**元数据**（工具名、成功与否、耗时、来源 IP），
+**不记参数与结果**——参数里可能带路径、正文甚至凭据。有测试专门守这条。
+
+> 注意：`/diagnostics` 是这次新增的，**需要重启 DSH 才会生效**。
+> 当前运行中的实例还没有这个端点（访问会 404）。
 
 支持的 MCP 方法：`initialize`、`notifications/initialized`、`ping`、
 `tools/list`、`tools/call`，以及批量请求。
@@ -161,7 +188,7 @@ $env:ELECTRON_RUN_AS_NODE='1'
 & $env:DSH_NODE_EXECUTABLE "test\host-load.mjs"
 ```
 
-当前：**43 + 17 + 25 + 29 + 23 + 12 = 149 个用例全部通过**。
+当前：**43 + 17 + 25 + 29 + 28 + 12 = 154 个用例全部通过**。
 
 ## 已知限制
 

@@ -255,6 +255,31 @@ export function apply(ctx, config) {
   const toolOwners = new Map();
 
   /**
+   * 调用审计：最近 N 次工具调用的记录。
+   *
+   * 用途有二：
+   *  1. 排障 —— 手机说「调不动」时能立刻分清是没连上、还是工具本身报错；
+   *  2. 证明 —— 「看见工具」和「真的调过」是两件事，这里是后者的证据。
+   *
+   * 只记元数据（工具名、成功与否、耗时、来源 IP），**不记参数与结果**，
+   * 因为参数里可能带路径、正文甚至凭据。
+   *
+   * @type {Array<{at: string, tool: string, ok: boolean, ms: number, via: string, peer: string, errorCode?: string}>}
+   */
+  const recentCalls = [];
+  const RECENT_CALLS_LIMIT = 50;
+
+  /**
+   * 记一条调用审计。超出上限时丢最旧的。
+   *
+   * @param {{tool: string, ok: boolean, ms: number, via: string, peer: string, errorCode?: string}} entry - 审计项。
+   */
+  const recordCall = (entry) => {
+    recentCalls.push({ at: new Date().toISOString(), ...entry });
+    while (recentCalls.length > RECENT_CALLS_LIMIT) recentCalls.shift();
+  };
+
+  /**
    * 鉴权。没配 token 时视为「已在可信网络内」，与 DSH 自身 webServer
    * 不做认证的现状保持一致 —— 真正的边界由外层网关（局域网 TLS / 隧道）提供。
    *
@@ -328,10 +353,19 @@ export function apply(ctx, config) {
    * @param {string} toolName - 工具名。
    * @param {unknown} args - 参数。
    * @param {import('node:http').ServerResponse} res - 用于在客户端断开时取消。
+   * @param {import('node:http').IncomingMessage} [req] - 请求，用于记来源 IP。
+   * @param {string} [via] - 从哪个端点来的（`native` / `mcp`），便于排障。
    * @returns {Promise<{ok: boolean, value?: unknown, content: unknown[], error?: {code: string, message: string}}>}
    */
-  const executeTool = async (toolName, args, res) => {
+  const executeTool = async (toolName, args, res, req, via = 'native') => {
     const callId = `bridge-${newTraceId()}`;
+    const startedAt = Date.now();
+    const peer = (() => {
+      const addr = req?.socket?.remoteAddress;
+      if (typeof addr !== 'string') return 'unknown';
+      // IPv4-mapped IPv6 归一，避免 ::ffff:192.168.1.5 这种看着吓人
+      return addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+    })();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error('bridge tool timeout')), timeoutMs);
     // 对端断开时立刻取消，别让工具在后台瞎跑。
@@ -349,20 +383,32 @@ export function apply(ctx, config) {
       });
       const first = Array.isArray(batch?.results) ? batch.results[0] : undefined;
       if (first === undefined) {
+        recordCall({ tool: toolName, ok: false, ms: Date.now() - startedAt, via, peer, errorCode: ERROR_CODE.INTERNAL });
         return {
           ok: false,
           content: [],
           error: { code: ERROR_CODE.INTERNAL, message: 'tool executor returned no result for the call' },
         };
       }
-      return projectExecutionResult(first.result);
+      const projected = projectExecutionResult(first.result);
+      recordCall({
+        tool: toolName,
+        ok: projected.ok,
+        ms: Date.now() - startedAt,
+        via,
+        peer,
+        ...(projected.ok ? {} : { errorCode: projected.error?.code }),
+      });
+      return projected;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const code = controller.signal.aborted ? ERROR_CODE.TIMEOUT : ERROR_CODE.TOOL_FAILED;
+      recordCall({ tool: toolName, ok: false, ms: Date.now() - startedAt, via, peer, errorCode: code });
       return {
         ok: false,
         content: [],
         error: {
-          code: controller.signal.aborted ? ERROR_CODE.TIMEOUT : ERROR_CODE.TOOL_FAILED,
+          code,
           message,
         },
       };
@@ -448,7 +494,7 @@ export function apply(ctx, config) {
         }
 
         const args = parsed.arguments === undefined ? {} : parsed.arguments;
-        const projected = await executeTool(toolName, args, res);
+        const projected = await executeTool(toolName, args, res, req, 'native');
         sendJson(res, projected.ok ? 200 : 502, {
           ok: projected.ok,
           traceId: gate.trace.traceId,
@@ -592,6 +638,29 @@ export function apply(ctx, config) {
         return;
       }
 
+      // `GET <base>/diagnostics` —— 排障用：最近调用记录 + 环境事实。
+      //
+      // 回答「手机看得见工具，但到底调通过没有」这个最容易含糊的问题。
+      // 只暴露元数据，不含参数、结果与任何凭据。
+      if (tail === '/diagnostics' && req.method === 'GET') {
+        const gate = preflight(req, res, checks);
+        if (!gate.ok) return;
+        const total = recentCalls.length;
+        const succeeded = recentCalls.filter((c) => c.ok).length;
+        sendJson(res, 200, okEnvelope({
+          nodeId: selfNodeId,
+          protocolVersion: PROTOCOL_VERSION,
+          byVia: {
+            native: recentCalls.filter((c) => c.via === 'native').length,
+            mcp: recentCalls.filter((c) => c.via === 'mcp').length,
+          },
+          totals: { calls: total, succeeded, failed: total - succeeded },
+          recent: recentCalls.slice(-20).reverse(),
+          lan: lanListener === null ? null : lanListener.address,
+        }));
+        return;
+      }
+
       // `GET <base>/nodes` —— 让手机确认电脑记住了哪些节点（排障用）。
       if (tail === '/nodes' && req.method === 'GET') {
         const gate = preflight(req, res, checks);
@@ -637,7 +706,7 @@ export function apply(ctx, config) {
         for (const one of messages) {
           const response = await handleMcpMessage(one, {
             listTools: () => listExposedTools(ctx.tools, REGISTERED_MARKER),
-            callTool: async (toolName, args) => executeTool(toolName, args, res),
+            callTool: async (toolName, args) => executeTool(toolName, args, res, req, 'mcp'),
           });
           if (response !== null) responses.push(response);
         }
