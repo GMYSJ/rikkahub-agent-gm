@@ -197,9 +197,23 @@ test('合法请求转换成功', () => {
   assert.equal(r.ok, true);
   assert.equal(r.options.model, 'deepseek-v4.1-flash');
   assert.equal(r.options.provider, 'workbuddy');
-  assert.equal(r.options.messages[0].content, '你好');
+  // content 必须是 ContentBlock[]，不能是裸字符串
+  assert.deepEqual(r.options.messages[0].content, [{ type: 'text', text: '你好' }]);
   assert.equal(r.options.temperature, 0.7);
   assert.equal(r.options.maxTokens, 100);
+});
+test('system 消息转到 GenerateOptions.system，不构造 system 消息', () => {
+  const r = openAiRequestToGenerateOptions({
+    model: 'm',
+    messages: [
+      { role: 'system', content: '你是助手' },
+      { role: 'user', content: 'hi' },
+    ],
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.options.system, '你是助手');
+  assert.equal(r.options.messages.length, 1);
+  assert.equal(r.options.messages[0].role, 'user');
 });
 test('model 无斜杠时 provider 与 model 用同值', () => {
   const r = openAiRequestToGenerateOptions({
@@ -219,17 +233,17 @@ test('缺 messages 被拒', () => {
 test('空 messages 被拒', () => {
   assert.equal(openAiRequestToGenerateOptions({ model: 'm', messages: [] }).ok, false);
 });
-test('未知 role 被拒', () => {
+test('assistant/tool 角色被明确拒绝（不猜 source 结构）', () => {
   assert.equal(openAiRequestToGenerateOptions({
-    model: 'm', messages: [{ role: 'hacker', content: 'x' }],
+    model: 'm', messages: [{ role: 'assistant', content: 'x' }],
   }).ok, false);
 });
-test('非字符串 content 降级成 JSON 文本而不丢消息', () => {
+test('非字符串 content 降级成文本块而不丢消息', () => {
   const r = openAiRequestToGenerateOptions({
     model: 'm', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
   });
   assert.equal(r.ok, true);
-  assert.match(r.options.messages[0].content, /"text":"hi"/);
+  assert.deepEqual(r.options.messages[0].content, [{ type: 'text', text: 'hi' }]);
 });
 test('tools 数组转换', () => {
   const r = openAiRequestToGenerateOptions({

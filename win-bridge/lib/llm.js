@@ -204,6 +204,8 @@ export function openAiRequestToGenerateOptions(body) {
 
   /** @type {Array<object>} */
   const messages = [];
+  /** @type {string[]} */
+  const systemParts = [];
   for (const m of raw.messages) {
     if (m === null || typeof m !== 'object') {
       return { ok: false, reason: 'each message must be an object' };
@@ -212,15 +214,34 @@ export function openAiRequestToGenerateOptions(body) {
     if (!['system', 'user', 'assistant', 'tool'].includes(role)) {
       return { ok: false, reason: `unsupported message role: ${role}` };
     }
-    // DSH 的 RequestUserInput 只接受 content 文本；图片/文件输入 v1 不支持，
-    // 这里把非字符串 content 降级成 JSON 文本，而不是丢弃整条消息。
-    const content = typeof m.content === 'string'
-      ? m.content
-      : JSON.stringify(m.content ?? '');
-    /** @type {object} */
-    const out = { role, content };
-    if (role === 'tool' && typeof m.tool_call_id === 'string') out.toolCallId = m.tool_call_id;
-    messages.push(out);
+    // DSH 的 Message.content 是 ContentBlock[]，不是字符串（dsh-llm/src/message.ts:143）。
+    // 传字符串会让适配器读不到文本块，流正常结束但 content 为空 —— 这个坑只有真调才暴露。
+    const rawContent = m.content;
+    /** @type {Array<object>} */
+    let contentBlocks;
+    if (typeof rawContent === 'string') {
+      contentBlocks = [{ type: 'text', text: rawContent }];
+    } else if (Array.isArray(rawContent)) {
+      contentBlocks = rawContent;
+    } else {
+      contentBlocks = [{ type: 'text', text: JSON.stringify(rawContent ?? '') }];
+    }
+
+    if (role === 'user') {
+      // RequestUserInput 只接受 {role:'user', content}（dsh-llm/src/types.ts:531-536），
+      // 不能带 id / source —— 这是唯一无需猜测 source 结构的角色。
+      messages.push({ role: 'user', content: contentBlocks });
+    } else if (role === 'system') {
+      // DSH 的 system 消息需要 source 字段，结构复杂且随版本变化。
+      // 保守做法：把 system 文本拼进 GenerateOptions.system（README:581 确认该字段存在），
+      // 不构造 system 消息本身。
+      const text = contentBlocks.map((b) => (typeof b.text === 'string' ? b.text : '')).join('');
+      systemParts.push(text);
+    } else {
+      // assistant / tool 消息也需要 source（含 modelId / toolCallId 等具体结构）。
+      // 在没核实结构前，宁可拒绝，也不要猜一个能过类型转换但运行时静默失败的形状。
+      return { ok: false, reason: `role "${role}" is not supported in v1 (use user messages and system)` };
+    }
   }
 
   /** @type {object} */
@@ -238,6 +259,7 @@ export function openAiRequestToGenerateOptions(body) {
     options.provider = model;
     options.model = model;
   }
+  if (systemParts.length > 0) options.system = systemParts.join('\n');
   if (typeof raw.temperature === 'number') options.temperature = raw.temperature;
   if (typeof raw.max_tokens === 'number') options.maxTokens = raw.max_tokens;
   if (Array.isArray(raw.tools) && raw.tools.length > 0) {
