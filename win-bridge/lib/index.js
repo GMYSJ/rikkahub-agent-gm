@@ -302,6 +302,9 @@ export function apply(ctx, config) {
   /** 已注册工具名 → 提供它的节点与原始工具名。 */
   const toolOwners = new Map();
 
+  /** 最近一次模型调用的 chunk 统计（排障：看 DSH 到底吐了什么）。 */
+  let lastLlmChunks = null;
+
   /**
    * 调用审计：最近 N 次工具调用的记录。
    *
@@ -767,8 +770,14 @@ export function apply(ctx, config) {
         let finishReason = 'stop';
         let usage;
         const toolCalls = [];
+        /** @type {Record<string, number>} */
+        const chunkCounts = {};
+        let firstFinishReason = null;
         try {
           for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
+            const ct = chunk?.type ?? 'unknown';
+            chunkCounts[ct] = (chunkCounts[ct] ?? 0) + 1;
+            if (ct === 'finish' && firstFinishReason === null) firstFinishReason = chunk.reason ?? null;
             if (chunk?.type === 'text-delta') content += chunk.text ?? '';
             else if (chunk?.type === 'reasoning-delta') reasoning += chunk.text ?? '';
             else if (chunk?.type === 'tool-call-delta') {
@@ -783,6 +792,7 @@ export function apply(ctx, config) {
             } else if (chunk?.type === 'usage') usage = normalizeUsage(chunk.usage);
             else if (chunk?.type === 'finish') finishReason = mapFinishReasonSafe(chunk.reason);
           }
+          lastLlmChunks = { model: modelName, chunks: chunkCounts, finishReason: firstFinishReason, contentLen: content.length, reasoningLen: reasoning.length };
           // 若整轮没有正文但有思考，一次性兜底（与流式路径一致）
           if (content === '' && reasoning !== '') content = reasoning;
           const message = { role: 'assistant', content };
@@ -883,6 +893,7 @@ export function apply(ctx, config) {
           totals: { calls: total, succeeded, failed: total - succeeded },
           recent: recentCalls.slice(-20).reverse(),
           lan: lanListeners.map((listener) => listener.address),
+          lastLlmChunks,
         }));
         return;
       }
