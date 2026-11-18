@@ -110,16 +110,19 @@ export function chunkToSse(chunk, ctx) {
     }
     const text = chunk.text ?? '';
     if (type === 'text-delta') {
+      ctx.hasText = true;
       frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: text } }));
     } else {
-      // reasoning-delta：推理模型（如 workbuddy 系）经常只吐 reasoning，
-      // 之前完全丢弃会导致"流正常结束但 content 为空"。
-      // 同时送 reasoning_content（标准扩展字段）与 content（兜底确保有正文）：
-      // 严格客户端读 content，支持思考的客户端读 reasoning_content。
+      // reasoning-delta 只走 reasoning_content（思考字段），**不进 content**。
+      // 之前同时塞 content 会导致每个思考分片都被当成正文显示，
+      // 屏幕上出现"一连串的思考了0秒"并把对话切碎。
+      // 同时累积到 reasoningBuffer：若整轮都没有 text-delta，
+      // 在 finish 时一次性作为 content 兜底（避免空回复）。
+      ctx.reasoningBuffer = (ctx.reasoningBuffer || '') + text;
       frames.push(sseFrame({
         id: ctx.id,
         model: ctx.model,
-        delta: { reasoning_content: text, content: text },
+        delta: { reasoning_content: text },
       }));
     }
   } else if (type === 'tool-call-delta') {
@@ -141,6 +144,13 @@ export function chunkToSse(chunk, ctx) {
     pendingUsage = normalizeUsage(chunk.usage);
   } else if (type === 'finish') {
     finishReason = mapFinishReason(chunk.reason);
+    // 若整轮没有任何正文（text-delta），但累积了 reasoning，
+    // 才把它一次性作为 content 发出去——避免空回复，又不刷屏。
+    const buffered = ctx.reasoningBuffer || '';
+    if (!ctx.hasText && buffered !== '') {
+      frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: buffered } }));
+      ctx.reasoningBuffer = '';
+    }
     frames.push(sseFrame({
       id: ctx.id,
       model: ctx.model,

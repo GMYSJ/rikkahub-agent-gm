@@ -93,14 +93,24 @@ test('text-delta 映射为 content', () => {
   });
   assert.equal(parseFrame(r.frames[0]).choices[0].delta.content, '你好');
 });
-test('reasoning-delta 同时送 reasoning_content 与 content（避免空回复）', () => {
+test('reasoning-delta 只走 reasoning_content，不刷屏正文', () => {
   const r = chunkToSse({ type: 'reasoning-delta', index: 0, text: '思考文本' }, {
     id: 'x', model: 'm', roleSent: true,
   });
   assert.equal(r.frames.length, 1);
   const d = parseFrame(r.frames[0]).choices[0].delta;
   assert.equal(d.reasoning_content, '思考文本');
-  assert.equal(d.content, '思考文本', '推理模型只吐 reasoning 时必须有 content 兜底');
+  assert.equal(d.content, undefined, '思考分片绝不能当正文发，否则会刷屏切碎对话');
+});
+test('全 reasoning 无正文时 finish 一次性兜底 content', () => {
+  const ctx = { id: 'x', model: 'm', roleSent: true, reasoningBuffer: '', hasText: false };
+  chunkToSse({ type: 'reasoning-delta', index: 0, text: '第一段' }, ctx);
+  chunkToSse({ type: 'reasoning-delta', index: 1, text: '第二段' }, ctx);
+  const r = chunkToSse({ type: 'finish', reason: 'stop' }, ctx);
+  // finish 应产生：兜底 content 帧 + finish 帧
+  const contents = r.frames.map((f) => parseFrame(f).choices[0].delta.content).filter(Boolean);
+  assert.equal(contents.length, 1, '兜底内容必须一次性发，不能多帧');
+  assert.equal(contents[0], '第一段第二段');
 });
 test('没有 block-start 时 text-delta 自动补 role', () => {
   const r = chunkToSse({ type: 'text-delta', index: 0, text: 'hi' }, {

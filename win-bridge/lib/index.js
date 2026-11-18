@@ -763,12 +763,14 @@ export function apply(ctx, config) {
 
         // 非流式：收集所有分片，拼成一个完整的 chat.completion 响应。
         let content = '';
+        let reasoning = '';
         let finishReason = 'stop';
         let usage;
         const toolCalls = [];
         try {
           for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
             if (chunk?.type === 'text-delta') content += chunk.text ?? '';
+            else if (chunk?.type === 'reasoning-delta') reasoning += chunk.text ?? '';
             else if (chunk?.type === 'tool-call-delta') {
               toolCalls.push({
                 id: chunk.id ?? `call_${newTraceId()}`,
@@ -781,6 +783,8 @@ export function apply(ctx, config) {
             } else if (chunk?.type === 'usage') usage = normalizeUsage(chunk.usage);
             else if (chunk?.type === 'finish') finishReason = mapFinishReasonSafe(chunk.reason);
           }
+          // 若整轮没有正文但有思考，一次性兜底（与流式路径一致）
+          if (content === '' && reasoning !== '') content = reasoning;
           const message = { role: 'assistant', content };
           if (toolCalls.length > 0) {
             message.tool_calls = toolCalls;
