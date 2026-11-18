@@ -248,7 +248,10 @@ cpolar 非常驻服务，由移动插件按需 spawn。
 - `RemoteEndpoint`：任意条，每条独立 token/priority（LAN / Tailscale / EasyTier / 未来任何通道）
 - `RemoteNodeProbe`：OkHttp 并发探测所有 `/health`，按可达性+延迟选最优
 - 设置页：增删任意地址，"探测并保存" / "重新探测" 一键切换
-- 提交 `b9f4e29`，静态校验 11/11，**CI 编译验证中**
+- 提交 `b9f4e29`（+ 修复 `edeb1e4`），静态校验 11/11
+- **CI 编译通过**：run 44375987423（23 分钟），`assembleRelease` + R8 全绿
+  - 第一次失败是 Kotlin `catch {}` 缺异常变量（`RemoteNode.kt:175`），已修
+  - 三通道参数已整理到桌面 `dsh-bridge-all-channels.txt`（含凭据，用完删）
 
 > 老配置兼容：保留 host/port/token 单地址字段，为空时由新结构回退。
 
