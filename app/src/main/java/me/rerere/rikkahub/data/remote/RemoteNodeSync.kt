@@ -36,11 +36,15 @@ object RemoteNodeSync {
      * @param settings 当前设置。
      * @param assistantIds 需要自动勾选该 MCP server 的 assistant id 列表。
      *   传空列表表示只添加 server，不自动勾选（用户需去 Assistant → MCP 手动开）。
+     * @param selected 每个节点探测选中的地址（nodeId → endpoint）。
+     *   传入后用它生成标准配置；不传则回退到节点自己的第一条地址。
+     *   这样"当前在哪就用哪条"，换网络时重新探测再 sync 即可。
      * @return 新 Settings，以及同步统计。
      */
     fun sync(
         settings: Settings,
         assistantIds: Collection<kotlin.uuid.Uuid> = emptyList(),
+        selected: Map<kotlin.uuid.Uuid, RemoteEndpoint> = emptyMap(),
     ): Pair<Settings, Result> {
         val nodes = settings.remoteNodes.filter { it.enabled && it.isValid }
         val nodeIds = nodes.map { it.id }.toSet()
@@ -51,7 +55,7 @@ object RemoteNodeSync {
             server.commonOptions.name.startsWith(managedPrefix)
         }
         val keptMcp = settings.mcpServers.filterNot { isManaged(it) || it.id in nodeIds }
-        val newMcp = nodes.mapNotNull { it.toMcpServerConfig() }
+        val newMcp = nodes.mapNotNull { node -> node.toMcpServerConfig(selected[node.id]) }
         val mergedMcp = keptMcp + newMcp
 
         // ---- Providers：同样按 id 覆盖，名字以 "DSH: " 开头视为托管 ----
@@ -59,7 +63,7 @@ object RemoteNodeSync {
             p.name.startsWith("DSH: ") || p.id in nodeIds
         }
         val keptProviders = settings.providers.filterNot(isManagedProvider)
-        val newProviders = nodes.mapNotNull { it.toOpenAIProvider() }
+        val newProviders = nodes.mapNotNull { node -> node.toOpenAIProvider(selected[node.id]) }
         val mergedProviders = keptProviders + newProviders
 
         // ---- assistants：按需自动勾选 MCP server ----
