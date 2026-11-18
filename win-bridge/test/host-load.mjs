@@ -38,7 +38,8 @@ const plugin = await import('../lib/index.js');
 
 await test('插件导出 name 与 inject', () => {
   assert.equal(plugin.name, 'dsh-mobile-bridge');
-  assert.deepEqual([...plugin.inject].sort(), ['tools', 'webServer']);
+  // llm 是可选注入：缺它时工具桥照常工作，只是模型端点返回 503。
+  assert.deepEqual([...plugin.inject].sort(), ['llm', 'tools', 'webServer']);
 });
 await test('插件导出 apply 函数', () => {
   assert.equal(typeof plugin.apply, 'function');
@@ -52,9 +53,10 @@ await test('schema 模块可独立加载', async () => {
   const mod = await import('../lib/schema.js');
   assert.equal(typeof mod.toolSchemaToWire, 'function');
 });
-await test('client 模块可独立加载', async () => {
-  const mod = await import('../lib/client.js');
-  assert.equal(typeof mod.callRemoteTool, 'function');
+await test('llm 模块可独立加载', async () => {
+  const mod = await import('../lib/llm.js');
+  assert.equal(mod.SSE_DONE, 'data: [DONE]\n\n');
+  assert.equal(typeof mod.chunkToSse, 'function');
 });
 
 console.log('\n== host: 真实 dsh-tools 可用性 ==');

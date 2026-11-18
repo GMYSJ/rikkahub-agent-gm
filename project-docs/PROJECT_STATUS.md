@@ -14,13 +14,22 @@
 > 4. **真机验证通过**：手机 Agent 经 MCP 真实执行了电脑工具
 >    （`session_search` 197ms、`leak_guard`×4、`memory_entity` 均成功）
 
-### 项目定位调整（用户已确认，方向 A）
+### 项目目标（用户 2026-11-19 再次明确）
 
-用户确认「DSH Go 和 RikkaHub 两个都用」，并选择**方向 A**：
+**整个工程仍按基准主提示词推进，唯一变化是移植目标：**
+**DSH Mobile（saya-ch/dsh-mobile）→ DSH-Go（ccch1mneyyy/dsh-Go）。**
 
-> **RikkaHub = 手机端 Agent（强在 Android 系统能力）**
-> **DSH Go = 电脑端 DSH 的手机遥控器（已成熟，直接用）**
-> **两者之间用桥打通**
+**最终形态仍然是「内置」** —— 把 DSH 的远程/工具/模型能力做进 RikkaHub，
+不是让用户长期依赖外部桥插件 + 手动配 MCP。
+
+当前 `win-bridge` 的定位是**过渡验证手段 + 接口层协议原型**
+（工具面已真机跑通），**不能据此判定「不需要内置」**。
+
+分寸把握（用户确认的方向 A）：
+- 不重造 DSH-Go 已完成的 100+ 远程 UI（那是追一个已完成的东西）
+- RikkaHub 专注 Android 系统能力（Shizuku/截屏/通知）
+- 桥作为接口层与协议验证场
+- **最终把这些能力内置进 RikkaHub 原生 UI**
 
 理由（已核实）：
 

@@ -54,6 +54,8 @@ Invoke-RestMethod "http://127.0.0.1:$port/dsh-mobile-bridge/health"
 | `GET` | `/dsh-mobile-bridge/nodes` | 查看已注册节点 |
 | `GET` | `/dsh-mobile-bridge/diagnostics` | **诊断：最近调用记录与统计** |
 | `POST` | `/dsh-mobile-bridge/mcp` | **MCP 兼容端点（推荐手机用这个）** |
+| `POST` | `/dsh-mobile-bridge/llm/v1/chat/completions` | **模型门面（OpenAI 兼容，流式）** |
+| `GET` | `/dsh-mobile-bridge/llm/v1/models` | 列出电脑上可用的 provider 路由 |
 
 ## 手机侧怎么接（推荐路径）
 
@@ -119,6 +121,28 @@ Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/diagnostics" -Head
 
 > 注意：`/diagnostics` 是这次新增的，**需要重启 DSH 才会生效**。
 > 当前运行中的实例还没有这个端点（访问会 404）。
+
+### 4. 电脑模型给手机用（OpenAI 兼容门面）
+
+手机 RikkaHub 的 `ProviderSetting.OpenAI` 直接指向桥即可，
+**手机侧零代码**：
+
+```
+设置 → 模型 → 添加 OpenAI 兼容供应商
+  baseUrl : http://192.168.1.3:61420/dsh-mobile-bridge/llm/v1
+  apiKey  : <lan.token>（桥用 Bearer 校验，不做厂商认证）
+  model id: workbuddy/deepseek-v4.1-flash
+```
+
+`model` 支持 `provider/model` 形式：桥会拆成 DSH 需要的
+`GenerateOptions.provider` + `model` 两个字段。
+
+端点：
+- `POST /llm/v1/chat/completions` — 流式（SSE）与非流式都支持
+- `GET /llm/v1/models` — 列出 `ctx.llm.listProviders()` 的真实路由（不虚构模型）
+
+**注意**：这是**过渡方案**。按主提示词的最终目标，能力要内置进 RikkaHub，
+桥只作接口层协议原型与验证场。
 
 支持的 MCP 方法：`initialize`、`notifications/initialized`、`ping`、
 `tools/list`、`tools/call`，以及批量请求。
@@ -188,7 +212,7 @@ $env:ELECTRON_RUN_AS_NODE='1'
 & $env:DSH_NODE_EXECUTABLE "test\host-load.mjs"
 ```
 
-当前：**44 + 17 + 25 + 29 + 28 + 12 = 155 个用例全部通过**。
+当前：**44 + 17 + 25 + 29 + 28 + 29 + 12 = 184 个用例全部通过**。
 
 ## 已知限制
 

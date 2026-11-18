@@ -41,15 +41,58 @@ import { toolSchemaToWire, wireParametersToSpec } from './schema.js';
 import { callRemoteTool, fetchRemoteTools } from './client.js';
 import { handleMessage as handleMcpMessage, RPC_ERROR, rpcError } from './mcp.js';
 import { startLanListener, validateLanOptions } from './lan.js';
+import {
+  newCompletionId,
+  chunkToSse,
+  SSE_DONE,
+  sseFrame,
+  openAiRequestToGenerateOptions,
+  normalizeUsage,
+  mapFinishReason,
+} from './llm.js';
+
+/**
+ * 流中途出错时的 SSE 错误帧（OpenAI 没有标准错误帧，用 finish_reason 表达）。
+ *
+ * @param {string} id - completion id。
+ * @param {string} model - 模型名。
+ * @param {string} message - 错误说明。
+ * @returns {string}
+ */
+function sseFrameForError(id, model, message) {
+  // 把错误写进 content，并保证流以 stop 收尾 —— 严格客户端也能消费。
+  return sseFrame({
+    id,
+    model,
+    delta: { role: 'assistant', content: `[bridge error] ${message}` },
+    finishReason: 'stop',
+  });
+}
+
+/**
+ * mapFinishReason 的安全包装（永不抛）。
+ *
+ * @param {unknown} reason - DSH finish reason。
+ * @returns {string}
+ */
+function mapFinishReasonSafe(reason) {
+  try {
+    return mapFinishReason(reason);
+  } catch {
+    return 'stop';
+  }
+}
 
 /** 插件身份。 */
 export const name = 'dsh-mobile-bridge';
 
 /**
- * 依赖注入：webServer 挂端点，tools 读写工具注册表。
- * 两者都是必需 —— 缺任何一个桥都没有意义，因此让 Cordis 等待而不是半死不活。
+ * 依赖注入：webServer 挂端点，tools 读写工具注册表，llm 用于模型门面。
+ *
+ * tools/webServer 是必需的；llm 是可选的 —— 如果 profile 没挂 llm 服务，
+ * 工具桥照常工作，只是 `/llm/*` 端点返回 503。这样降级比整个插件起不来好。
  */
-export const inject = ['webServer', 'tools'];
+export const inject = ['webServer', 'tools', 'llm'];
 
 /** 响应体上限，防止对端一上来就灌爆内存。 */
 const MAX_BODY_BYTES = 512 * 1024;
@@ -635,6 +678,154 @@ export function apply(ctx, config) {
           accepted,
           rejected,
         }));
+        return;
+      }
+
+      // ------------------------------------------------------- 模型门面
+      //
+      // OpenAI 兼容的 /v1/chat/completions，让 RikkaHub 用现成的
+      // OpenAIProvider 就能调电脑上的模型（WorkBuddy 等）。手机侧零代码。
+      if (tail === '/llm/v1/chat/completions' && req.method === 'POST') {
+        const gate = preflight(req, res, checks);
+        if (!gate.ok) return;
+
+        if (ctx.llm === undefined || typeof ctx.llm.stream !== 'function') {
+          sendJson(res, 503, errorEnvelope(ERROR_CODE.INTERNAL, 'llm service is not available in this profile'));
+          return;
+        }
+
+        const body = await readBody(req, MAX_BODY_BYTES);
+        if (!body.ok) {
+          sendJson(res, 413, errorEnvelope(ERROR_CODE.PAYLOAD_TOO_LARGE, body.reason));
+          return;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(body.text);
+        } catch {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body is not valid JSON'));
+          return;
+        }
+        const converted = openAiRequestToGenerateOptions(parsed);
+        if (!converted.ok) {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, converted.reason));
+          return;
+        }
+
+        const id = newCompletionId();
+        const modelName = converted.options.model;
+        const wantsStream = parsed.stream !== false; // OpenAI 缺省是流式；显式 stream:false 才关闭
+
+        // 客户端断开时中止模型调用。
+        const controller = new AbortController();
+        res.on('close', () => controller.abort());
+
+        if (wantsStream) {
+          res.writeHead(200, {
+            'content-type': 'text/event-stream; charset=utf-8',
+            'cache-control': 'no-cache, no-transform',
+            connection: 'keep-alive',
+            'x-dsh-bridge-protocol': String(PROTOCOL_VERSION),
+          });
+          /** @type {{roleSent: boolean, pendingUsage: object | undefined, finished: boolean}} */
+          const state = { roleSent: false, pendingUsage: undefined, finished: false };
+          try {
+            for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
+              const out = chunkToSse(chunk, { id, model: modelName, roleSent: state.roleSent, pendingUsage: state.pendingUsage });
+              state.roleSent = out.roleSent;
+              state.pendingUsage = out.pendingUsage;
+              for (const frame of out.frames) res.write(frame);
+              if (out.finishReason !== null) state.finished = true;
+            }
+            // 兜底：如果流结束时 DSH 没有发 finish 帧，我们补一个，
+            // 否则客户端会一直等 [DONE]。
+            if (!state.finished) {
+              for (const frame of chunkToSse({ type: 'finish', reason: 'stop' }, {
+                id, model: modelName, roleSent: state.roleSent, pendingUsage: state.pendingUsage,
+              }).frames) res.write(frame);
+            }
+            res.write(SSE_DONE);
+          } catch (err) {
+            // 流中途出错：不能只写 [DONE]，客户端需要知道出错了。
+            const message = err instanceof Error ? err.message : String(err);
+            res.write(sseFrameForError(id, modelName, message));
+            res.write(SSE_DONE);
+          } finally {
+            res.end();
+          }
+          return;
+        }
+
+        // 非流式：收集所有分片，拼成一个完整的 chat.completion 响应。
+        let content = '';
+        let finishReason = 'stop';
+        let usage;
+        const toolCalls = [];
+        try {
+          for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
+            if (chunk?.type === 'text-delta') content += chunk.text ?? '';
+            else if (chunk?.type === 'tool-call-delta') {
+              toolCalls.push({
+                id: chunk.id ?? `call_${newTraceId()}`,
+                type: 'function',
+                function: {
+                  name: chunk.name ?? '',
+                  arguments: chunk.argumentsDelta ?? '',
+                },
+              });
+            } else if (chunk?.type === 'usage') usage = normalizeUsage(chunk.usage);
+            else if (chunk?.type === 'finish') finishReason = mapFinishReasonSafe(chunk.reason);
+          }
+          const message = { role: 'assistant', content };
+          if (toolCalls.length > 0) {
+            message.tool_calls = toolCalls;
+            finishReason = 'tool_calls';
+          }
+          sendJson(res, 200, {
+            id,
+            object: 'chat.completion',
+            created: Math.floor(Date.now() / 1000),
+            model: modelName,
+            choices: [{ index: 0, message, finish_reason: finishReason }],
+            ...(usage !== undefined ? { usage } : {}),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          sendJson(res, 502, errorEnvelope(ERROR_CODE.TOOL_FAILED, message));
+        }
+        return;
+      }
+
+      // `GET <base>/v1/models` —— 让手机列出电脑上可用的模型。
+      // 走 ctx.llm.listProviders()（README 确认存在），不虚构模型。
+      if (tail === '/llm/v1/models' && req.method === 'GET') {
+        const gate = preflight(req, res, checks);
+        if (!gate.ok) return;
+        if (ctx.llm === undefined || typeof ctx.llm.listProviders !== 'function') {
+          sendJson(res, 503, errorEnvelope(ERROR_CODE.INTERNAL, 'llm service is not available in this profile'));
+          return;
+        }
+        try {
+          const providers = ctx.llm.listProviders() ?? [];
+          /** @type {Array<object>} */
+          const models = [];
+          for (const provider of providers) {
+            // LlmProviderInfo = { id, name }（dsh-llm/src/types.ts:230-235）。
+            // id 是 GenerateOptions.provider 用的路由键，正好可作模型 id。
+            const key = typeof provider?.id === 'string' ? provider.id : '';
+            if (key === '') continue;
+            models.push({
+              id: key,
+              object: 'model',
+              created: Math.floor(Date.now() / 1000),
+              owned_by: typeof provider?.name === 'string' && provider.name !== '' ? provider.name : key,
+            });
+          }
+          sendJson(res, 200, { object: 'list', data: models });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          sendJson(res, 502, errorEnvelope(ERROR_CODE.INTERNAL, message));
+        }
         return;
       }
 

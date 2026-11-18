@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### 2026-11-19（第八轮）— 模型门面（OpenAI 兼容）+ 目标表述修正
+
+**用户明确**：整个工程仍按基准主提示词推进，**最终形态是内置**；
+唯一变化是移植目标 DSH Mobile → DSH-Go。当前桥只是过渡验证手段与接口层协议原型。
+（已记入记忆与 PROJECT_STATUS）
+
+**新增 `win-bridge/lib/llm.js`**：DSH StreamChunk ↔ OpenAI SSE 转换
+
+DSH 的 7 种 chunk（`dsh-llm/src/types.ts:496-508`）映射：
+- `text-delta` → `delta.content`
+- `reasoning-delta` → 空 content（不泄漏思考文本，OpenAI 无标准字段）
+- `tool-call-delta` → `delta.tool_calls` 增量
+- `usage` 暂存、合并到 `finish` 帧
+- `finish` → finish_reason（映射异常结束为 stop）
+
+**新增两个端点**：
+- `POST /llm/v1/chat/completions`（SSE 流式 + 非流式）
+- `GET /llm/v1/models`（列 `ctx.llm.listProviders()` 真实路由，不虚构）
+
+**实测源码发现并修正两处**：
+- `LlmProviderInfo` 真实字段是 `{id, name}`，不是我假设的 `{provider, name}`
+- `GenerateOptions` 需要 `{provider, model}` 两个字段；`provider/model` 形式需拆分
+
+**inject 加 `llm`**（可选降级：缺 llm 服务时工具桥照常工作，模型端点返回 503）
+
+**测试 155 → 184**（新增 test/llm.mjs 29 项），全绿。
+
+> 注意：需重启 DSH 生效。
+
+---
+
 ### 2026-11-19（第七轮）— 【真机暴露的严重 bug】工具 schema 被二次包装
 
 **背景**：用户手机已能看到工具并实际调用。`/diagnostics` 显示 9 次调用中 8 次失败，
