@@ -9,10 +9,84 @@
 | `test/smoke.mjs` | 43 | ✅ |
 | `test/client.mjs` | 17 | ✅ |
 | `test/e2e.mjs` | 25 | ✅ |
-| `test/host-load.mjs` | 12 | ✅ |
 | `test/mcp.mjs` | 29 | ✅ |
-| **离线合计** | **126** | **全绿** |
-| **真实 DSH 端到端** | **17 项** | **全绿**（见下） |
+| `test/lan.mjs` | 23 | ✅ |
+| `test/host-load.mjs` | 12 | ✅ |
+| **离线合计** | **149** | **全绿** |
+| **真实 DSH 端到端** | **34 项**（回环 17 + 局域网 17） | **全绿** |
+
+## 2026-11-19（第五轮）— 局域网监听
+
+**背景**：DSH Desktop 的 webServer 只绑 `127.0.0.1`，手机在局域网里够不到。
+`dsh-host-webserver` 又拒绝通配地址，所以只能另起独立监听。
+
+### 离线测试：新增 `test/lan.mjs`（23 项）
+
+**配置校验（13）**
+- 合法配置通过
+- **拒绝 `0.0.0.0` / `::` / `*`**（会把桥暴露到所有网卡）
+- **拒绝 `127.x` / `localhost`**（绑回环等于没做）
+- 拒绝非 IPv4 字面量、缺 host、端口越界/非整数
+- **缺 token 被拒、token 太短被拒**（局域网必须鉴权）
+
+**真实监听（10）**
+- 监听成功、`/health` 可用、`/tools` 列出工具、`/tools/call` 真执行
+- **MCP 端点也可用**（复用同一 handler）
+- **跳数防护照样生效**（508）
+- handler 抛异常不崩监听（返回 500）
+- `close()` 能释放端口、端口占用时明确失败、绑定不存在地址时明确失败
+
+### 真实 DSH 局域网验证（17 项）
+
+| # | 项目 | 结果 |
+|---|---|---|
+| 1 | 监听地址 | ✅ `192.168.1.3:61420`，**未绑 0.0.0.0** |
+| 2 | `/health` | ✅ 200，`authRequired: true` |
+| 3 | 无 token `/tools` | ✅ 401 |
+| 4 | 带 LAN token `/tools` | ✅ **29 个工具** |
+| 5 | **主 token 在 LAN 端口** | ✅ **401（凭据隔离生效）** |
+| 6 | LAN MCP `initialize` | ✅ `dsh-mobile-bridge v0.1.0` |
+| 7 | LAN MCP `notifications/initialized` | ✅ 202 空正文 |
+| 8 | LAN MCP `tools/list` | ✅ 29 个 |
+| 9 | LAN MCP `tools/call` 真执行 | ✅ 返回记忆库内容 |
+| 10-14 | 连续 5 次 ping | ✅ 5/5 |
+| 15 | LAN 跳数防护 | ✅ 508 |
+| 16 | LAN `mcp__` 前缀拦截 | ✅ 403 |
+| 17 | 回归检查 | ✅ 见下 |
+
+### 回归检查发现的问题
+
+装桥时 `install_bundle` 的 pnpm 改写了 `package.json`，
+把 `dsh-go-workspace` 从 `dsh.profile.bundles` 去掉了。
+
+**追查**：对比 `package.json.bak-*` 系列备份，确认它在 `bak-bridge-20261119-002539`
+（00:25:39）里还在，之后消失。
+
+**判断：不恢复。** 依据：
+- 用户明确说「换了这个新插件，原来那个弃用了」
+- 本次会话**第一次核查时 3443 就已不监听**（说明早已停用）
+- 两者同脉网关、抢 3443 与 `mobile-access`，旧包明写不可并存
+
+其余回归项全部正常：`im-qqbot` 的 `appId`/`appSecret` 仍在，其余插件完好。
+
+### 复现命令
+
+```powershell
+# 局域网可达性
+Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/health"
+
+# 带令牌列工具
+$patch = Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\cordis.patch.yml" -Encoding UTF8 -Raw
+$lan = [regex]::Match($patch, "lan:\s*\r?\n\s*host:\s*'[^']+'\s*\r?\n\s*port:\s*\d+\s*\r?\n\s*token:\s*'([0-9a-f]{64})'").Groups[1].Value
+Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/tools" -Headers @{ Authorization = "Bearer $lan" }
+```
+
+### 未验证
+
+- [ ] **真实 Android 手机**（需要你在手机上配 MCP，本机无 adb）
+- [ ] 跨网段 / 经路由器的连通性（只在同一 WLAN 内验证）
+- [ ] TLS（当前局域网是明文 HTTP，仅靠 token）
+
 
 ## 2026-11-19（第四轮）— 真实 DSH 环境端到端验证
 

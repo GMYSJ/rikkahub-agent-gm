@@ -11,6 +11,7 @@
     "./schema": "./lib/schema.js",
     "./client": "./lib/client.js",
     "./mcp": "./lib/mcp.js",
+    "./lan": "./lib/lan.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -19,7 +20,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node test/smoke.mjs && node test/client.mjs && node test/e2e.mjs && node test/mcp.mjs",
+    "test": "node test/smoke.mjs && node test/client.mjs && node test/e2e.mjs && node test/mcp.mjs && node test/lan.mjs",
     "test:host": "node test/host-load.mjs",
     "test:all": "npm test && npm run test:host"
   },

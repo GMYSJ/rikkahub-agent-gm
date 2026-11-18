@@ -56,17 +56,42 @@ Invoke-RestMethod "http://127.0.0.1:$port/dsh-mobile-bridge/health"
 
 ## 手机侧怎么接（推荐路径）
 
-RikkaHub 已有完整的 MCP 客户端（`McpSessionRegistry.kt:466-478` 支持
-`StreamableHttpClientTransport`）。所以**手机侧不需要实现本桥的私有协议**：
+### 1. 配置（在 profile 的 `cordis.patch.yml`）
+
+```yaml
+- id: plugin-mobile-bridge
+  config:
+    enabled: true
+    listenPath: /dsh-mobile-bridge
+    selfNodeId: windows-dsh
+    token: '<主入口令牌>'
+    lan:
+      host: '192.168.1.3'    # 改成你的 WLAN 地址
+      port: 61420
+      token: '<局域网令牌>'
+```
+
+### 2. 手机 RikkaHub 配置
 
 ```
-RikkaHub → 设置 → MCP → 添加服务器
+设置 → MCP → 添加服务器
   transport: streamable-http
-  url:       https://<电脑>:<port>/dsh-mobile-bridge/mcp
-  headers:   Authorization: Bearer <token>   （如果配了 token）
+  url:       http://192.168.1.3:61420/dsh-mobile-bridge/mcp
+  headers:   Authorization: Bearer <lan.token>
 ```
 
 然后**务必**在 Assistant → MCP 里勾选该 server，否则工具不会出现。
+
+### 3. 验证
+
+```powershell
+# 局域网可达性
+Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/health"
+
+# 带令牌列工具
+$t = '你的lan.token'
+Invoke-RestMethod "http://192.168.1.3:61420/dsh-mobile-bridge/tools" -Headers @{ Authorization = "Bearer $t" }
+```
 
 支持的 MCP 方法：`initialize`、`notifications/initialized`、`ping`、
 `tools/list`、`tools/call`，以及批量请求。
@@ -83,8 +108,32 @@ RikkaHub → 设置 → MCP → 添加服务器
 | `enabled` | `false` | 是否挂载端点 |
 | `listenPath` | `/dsh-mobile-bridge` | 端点前缀 |
 | `selfNodeId` | `windows-dsh` | 本节点标识，写进 trace 头 |
-| `token` | 未设置 | 设置后所有请求需 `Authorization: Bearer <token>` |
+| `token` | 未设置 | 主入口（webServer 回环）的令牌 |
 | `timeoutMs` | `120000` | 单次工具执行超时，上限 600000 |
+| `lan` | 未设置 | 可选：开一个**独立的局域网监听**（见下） |
+
+### 局域网监听（手机接入必需）
+
+DSH Desktop 的 webServer 只绑 `127.0.0.1`，手机在局域网里够不到。
+所以桥支持另起一个独立监听：
+
+```yaml
+lan:
+  host: '192.168.1.3'   # 必须是具体网卡地址；0.0.0.0 / 127.x 一律拒绝
+  port: 61420
+  token: '<至少16字符>'  # 与顶层 token 是两套独立凭据
+```
+
+**四条硬规则**（都有测试覆盖）：
+
+| 规则 | 为什么 |
+|---|---|
+| 拒绝 `0.0.0.0` / `::` / `*` | 那会把桥暴露到**所有**网卡，包括可能的公网侧 |
+| 拒绝 `127.x` / `localhost` | 绑回环等于没做这件事 |
+| 强制 `lan.token`（≥16 字符） | 局域网暴露必须鉴权，否则拒绝启动 |
+| `lan.token` 与 `token` 互不通用 | 独立入口用独立凭据，主 token 泄露不波及局域网 |
+
+启动失败（端口占用、地址不存在）只会**记警告**，不影响主通道。
 
 ## 安全设计
 
@@ -93,6 +142,7 @@ RikkaHub → 设置 → MCP → 添加服务器
 - **循环防护**：每次转发跳数 +1，达到 2 直接拒绝，不执行任何工具。
 - **禁止自我回显**：不能通过桥调用桥自己注册的工具；`/tools` 也不回显它们。
 - **令牌比较**用等长异或，避免时序泄露。
+- **两个入口共用同一份 handler**，因此行为必然一致，不会出现「回环能用、局域网行为不同」。
 
 ## 测试
 
@@ -104,13 +154,14 @@ node test/client.mjs
 # 真 HTTP 服务器端到端（不需要 DSH）
 node test/e2e.mjs
 node test/mcp.mjs
+node test/lan.mjs
 
 # 真实 DSH 运行时校验（需要 DSH 安装，不启动 DSH）
 $env:ELECTRON_RUN_AS_NODE='1'
 & $env:DSH_NODE_EXECUTABLE "test\host-load.mjs"
 ```
 
-当前：**43 + 17 + 25 + 12 + 29 = 126 个用例全部通过**。
+当前：**43 + 17 + 25 + 29 + 23 + 12 = 149 个用例全部通过**。
 
 ## 已知限制
 

@@ -5,6 +5,13 @@
 # 这一行把桥插件挂进 profile。默认 `enabled: false`：
 # 端点一旦挂上就会成为局域网可达的攻击面，因此必须由用户显式打开，
 # 而不是装完就默认对外监听。
+#
+# 可选 `lan:` 段用于开一个独立的局域网监听（手机要用必须配）：
+#   lan:
+#     host: '192.168.1.3'    # 必须是一个具体网卡地址，不接受 0.0.0.0
+#     port: 61420
+#     token: '<至少16字符>'
+# 注意：lan.token 与顶层 token 是**两套独立凭据**，互不通用。
 - insert:
     - id: plugin-mobile-bridge
       name: 'dsh-mobile-bridge'

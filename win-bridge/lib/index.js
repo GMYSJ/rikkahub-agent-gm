@@ -40,6 +40,7 @@ import {
 import { toolSchemaToWire, wireParametersToSpec } from './schema.js';
 import { callRemoteTool, fetchRemoteTools } from './client.js';
 import { handleMessage as handleMcpMessage, RPC_ERROR, rpcError } from './mcp.js';
+import { startLanListener, validateLanOptions } from './lan.js';
 
 /** 插件身份。 */
 export const name = 'dsh-mobile-bridge';
@@ -221,6 +222,19 @@ export function apply(ctx, config) {
     ? Math.min(Math.round(cfg.timeoutMs), 600_000)
     : 120_000;
 
+  /**
+   * 局域网监听配置（可选）。
+   *
+   * 形如 `lan: { host: '192.168.1.3', port: 61420, token: '...' }`。
+   * 不配就是 `null`，只保留回环通道。
+   */
+  const lanConfig = (cfg.lan !== null && typeof cfg.lan === 'object' && !Array.isArray(cfg.lan))
+    ? cfg.lan
+    : null;
+
+  /** 局域网监听句柄，启动是异步的，先占位。 */
+  let lanListener = null;
+
   /** 本桥注册的工具名前缀，用于把它们从「可暴露清单」里排除。 */
   const REGISTERED_MARKER = 'mcp__';
 
@@ -247,8 +261,18 @@ export function apply(ctx, config) {
    * @param {import('node:http').IncomingMessage} req - HTTP 请求。
    * @returns {{ok: true} | {ok: false, reason: string}}
    */
-  const authorize = (req) => {
-    if (token === null) return { ok: true };
+  /**
+   * 构造一个鉴权器。
+   *
+   * **为什么要参数化**：局域网独立监听必须用自己的 token，不能复用主 token ——
+   * 否则「独立监听用独立凭据」这个安全设计就落空了。
+   * 没配 token 时视为「已在可信网络内」，与 DSH 自身 webServer 的现状一致。
+   *
+   * @param {string | null} expectedToken - 该入口接受的令牌，null 表示不鉴权。
+   * @returns {(req: import('node:http').IncomingMessage) => {ok: true} | {ok: false, reason: string}}
+   */
+  const makeAuthorizer = (expectedToken) => (req) => {
+    if (expectedToken === null) return { ok: true };
     const raw = req.headers[HEADER.AUTHORIZATION];
     const value = Array.isArray(raw) ? raw[0] : raw;
     if (typeof value !== 'string') return { ok: false, reason: 'missing Authorization header' };
@@ -256,11 +280,14 @@ export function apply(ctx, config) {
     if (match === null) return { ok: false, reason: 'Authorization must be `Bearer <token>`' };
     // 长度不等直接拒绝，避免逐字符比较泄露长度信息。
     const given = match[1];
-    if (given.length !== token.length) return { ok: false, reason: 'invalid token' };
+    if (given.length !== expectedToken.length) return { ok: false, reason: 'invalid token' };
     let diff = 0;
-    for (let i = 0; i < given.length; i += 1) diff |= given.charCodeAt(i) ^ token.charCodeAt(i);
+    for (let i = 0; i < given.length; i += 1) diff |= given.charCodeAt(i) ^ expectedToken.charCodeAt(i);
     return diff === 0 ? { ok: true } : { ok: false, reason: 'invalid token' };
   };
+
+  /** 主入口（webServer 回环）的鉴权器。 */
+  const authorize = makeAuthorizer(token);
 
   /**
    * 统一的入站前处理：鉴权 + 跳数预算。
@@ -269,8 +296,16 @@ export function apply(ctx, config) {
    * @param {import('node:http').ServerResponse} res - HTTP 响应。
    * @returns {{ok: true, trace: object} | {ok: false}}
    */
-  const preflight = (req, res) => {
-    const auth = authorize(req);
+  /**
+   * 统一的入站前处理：鉴权 + 跳数预算。
+   *
+   * @param {import('node:http').IncomingMessage} req - HTTP 请求。
+   * @param {import('node:http').ServerResponse} res - HTTP 响应。
+   * @param {(req: import('node:http').IncomingMessage) => {ok: true} | {ok: false, reason: string}} [checks] - 用哪套鉴权，缺省用主入口的。
+   * @returns {{ok: true, trace: object} | {ok: false}}
+   */
+  const preflight = (req, res, checks = authorize) => {
+    const auth = checks(req);
     if (!auth.ok) {
       sendJson(res, 401, errorEnvelope(ERROR_CODE.UNAUTHORIZED, auth.reason));
       return { ok: false };
@@ -342,17 +377,21 @@ export function apply(ctx, config) {
   // ---------------------------------------------------------------- 出方向
 
   /**
-   * `GET <base>/tools` —— 列出可调用的 DSH 工具。
+   * 构造桥的请求处理器。
+   *
+   * **刻意抽成工厂**：主 webServer 路由与局域网监听共用同一份实现，
+   * 因此两者的**行为**必然一致（不会出现「回环能用、局域网行为不同」的漂移），
+   * 但各自可以用**不同的鉴权令牌**。
+   *
+   * @param {(req: import('node:http').IncomingMessage) => {ok: true} | {ok: false, reason: string}} checks - 该入口的鉴权器。
+   * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>}
    */
-  const listRoute = () => ({
-    kind: /** @type {const} */ ('prefix'),
-    path: basePath,
-    handler: async (req, res) => {
+  const makeBridgeHandler = (checks) => async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://bridge.invalid');
       const tail = url.pathname.slice(basePath.length).replace(/\/+$/, '');
 
       if (tail === '/tools' && req.method === 'GET') {
-        const gate = preflight(req, res);
+        const gate = preflight(req, res, checks);
         if (!gate.ok) return;
         const tools = listExposedTools(ctx.tools, REGISTERED_MARKER);
         sendJson(res, 200, okEnvelope({
@@ -373,7 +412,7 @@ export function apply(ctx, config) {
       }
 
       if (tail === '/tools/call' && req.method === 'POST') {
-        const gate = preflight(req, res);
+        const gate = preflight(req, res, checks);
         if (!gate.ok) return;
 
         const body = await readBody(req, MAX_BODY_BYTES);
@@ -423,7 +462,7 @@ export function apply(ctx, config) {
       // ------------------------------------------------------------ 入方向
 
       if (tail === '/register' && req.method === 'POST') {
-        const gate = preflight(req, res);
+        const gate = preflight(req, res, checks);
         if (!gate.ok) return;
 
         const body = await readBody(req, MAX_BODY_BYTES);
@@ -555,7 +594,7 @@ export function apply(ctx, config) {
 
       // `GET <base>/nodes` —— 让手机确认电脑记住了哪些节点（排障用）。
       if (tail === '/nodes' && req.method === 'GET') {
-        const gate = preflight(req, res);
+        const gate = preflight(req, res, checks);
         if (!gate.ok) return;
         sendJson(res, 200, okEnvelope({
           nodes: [...remoteNodes.entries()].map(([node, info]) => ({
@@ -573,7 +612,7 @@ export function apply(ctx, config) {
       // 手机的 StreamableHttpClientTransport 直接指向 `<base>/mcp` 即可。
       // 它比让手机实现本桥的私有协议省得多（手机侧现成有完整 MCP 客户端）。
       if (tail === '/mcp' && req.method === 'POST') {
-        const gate = preflight(req, res);
+        const gate = preflight(req, res, checks);
         if (!gate.ok) return;
 
         const body = await readBody(req, MAX_BODY_BYTES);
@@ -621,18 +660,61 @@ export function apply(ctx, config) {
       }
 
       sendJson(res, 404, errorEnvelope(ERROR_CODE.NOT_FOUND, `no such bridge endpoint: ${url.pathname}`));
-    },
-  });
+  };
 
-  disposers.push(ctx.webServer.register(listRoute()));
+  /** 主入口（webServer 回环）的处理器。 */
+  const bridgeHandler = makeBridgeHandler(authorize);
+
+  disposers.push(ctx.webServer.register({
+    kind: /** @type {const} */ ('prefix'),
+    path: basePath,
+    handler: bridgeHandler,
+  }));
 
   ctx.logger?.info?.(`dsh-mobile-bridge: mounted at ${basePath} (node=${selfNodeId}, auth=${token !== null ? 'token' : 'none'})`);
 
-  // 统一回收：端点 + 所有入方向注册的工具。
+  // ------------------------------------------------------- 局域网独立监听
+  //
+  // DSH 的 webServer 只绑 127.0.0.1，手机在局域网里够不到。
+  // 这里另起一个独立监听，只服务桥的端点（复用同一个 handler）。
+  //
+  // 注意：它是**可选**的，且配置不合法时只记日志、不阻断插件启动 ——
+  // 因为主通道（回环）本身是可用的，不该因为局域网配置写错就整个废掉。
+  if (lanConfig !== null) {
+    const verdict = validateLanOptions(lanConfig);
+    if (!verdict.ok) {
+      ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener skipped — ${verdict.reason}`);
+    } else {
+      // 独立监听用**它自己的** token（不与主 token 混用），
+      // 这样即使主 token 泄露，局域网入口仍是独立凭据。
+      // handler 与主入口共用同一份实现，只是换一套鉴权。
+      const lanHandler = makeBridgeHandler(makeAuthorizer(verdict.token));
+      startLanListener({
+        host: verdict.host,
+        port: verdict.port,
+        handler: lanHandler,
+        log: (message) => ctx.logger?.info?.(message),
+      }).then((started) => {
+        if (!started.ok) {
+          ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener failed — ${started.reason}`);
+          return;
+        }
+        lanListener = started;
+      }).catch((err) => {
+        ctx.logger?.warn?.(`dsh-mobile-bridge: LAN listener threw — ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+  }
+
+  // 统一回收：端点 + 局域网监听 + 所有入方向注册的工具。
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => () => {
       toolOwners.clear();
       remoteNodes.clear();
+      if (lanListener !== null) {
+        lanListener.close().catch(() => { /* 关闭失败不阻断卸载 */ });
+        lanListener = null;
+      }
       for (const dispose of registeredDisposers.splice(0)) {
         try {
           if (typeof dispose === 'function') dispose();
