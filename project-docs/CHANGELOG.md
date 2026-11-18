@@ -1,0 +1,133 @@
+# 变更日志 / CHANGELOG
+
+## Unreleased
+
+### 2026-11-19（第三轮）— 增加 MCP 兼容端点，手机侧可零代码接入
+
+**新增 `win-bridge/lib/mcp.js`** — 最小 MCP（Streamable HTTP）服务端实现
+
+实现要点：不依赖任何 MCP SDK，纯 JSON-RPC 逻辑，约 250 行，可脱宿主测试。
+
+支持：`initialize`、`notifications/initialized`、`notifications/cancelled`、
+`ping`、`tools/list`、`tools/call`，以及 JSON-RPC 批量请求。
+
+不实现：resources、prompts、sampling、roots、progress、服务端推送流
+（`GET /mcp` 返回 405，请求这些方法得到 `-32601`）。
+
+**为什么值得做**：RikkaHub 已有完整 MCP 客户端
+（`McpSessionRegistry.kt:466-478` 支持 `StreamableHttpClientTransport`），
+所以手机侧指向 `<base>/mcp` 即可，**不需要写任何 Kotlin 代码**。
+私有协议端点仍保留，用于 `/register` 这类 MCP 表达不了的反向注册。
+
+**错误语义（容易做错的地方）**：工具执行失败返回 `result.isError=true`，
+**不**打成 JSON-RPC error —— 否则客户端会误判为协议故障。
+
+**重构**：抽出 `executeTool()`，让原生 `/tools/call` 与 MCP `/mcp` 共用同一执行路径，
+消灭重复代码，并确保两者都走 `ctx.tools.execute()`（**不绕审批**）。
+
+**测试**：新增 `test/mcp.mjs`（29 用例）。
+总计 **43 + 17 + 25 + 12 + 29 = 126 个用例全部通过**。
+
+**文档**：`PROTOCOL_SPEC.md` 增 2.1/2.2 两节；
+`win-bridge/README.md` 补「手机侧怎么接」；
+`INDEX.md` 增加「路径 A（MCP，零代码）/ 路径 B（Kotlin）」两条建议路线。
+
+---
+
+### 2026-11-19（第二轮）— 阶段 1 完成
+
+**新增 4 份阶段 1 文档**
+
+- `TOOL_BRIDGE.md` — 工具代理层：`Tool` 真实结构、5 条装配链路、审批体系 5 组件、
+  `mcp__` 前缀为何是安全机制、双向流程、防循环/防重/防丢
+- `MODEL_ROUTING.md` — 统一模型：两端模型体系、`UnifiedModel` 数据模型、
+  uid 命名与去重规则、三个量化方向、认证隔离、模型下线处理
+- `SECURITY_MODEL.md` — 六层防御、威胁模型、`NO_ALWAYS_ALLOW` 完整 10 项、
+  凭据三类分清、**已实现 vs 未实现诚实清单**
+- `DATA_MIGRATION.md` — 数据结构改动点、`Settings` 逐字段存储的迁移利好、
+  Workspace 四类路径边界、回滚方案、发布前检查清单
+
+**修正上一轮的一处错误结论**
+
+上一轮我声称「电脑是 OpenAI 兼容端点，手机侧加个 baseUrl 即可，零代码」。
+**这是错的**，已核实纠正：
+
+- DSH **不对外提供** `POST /v1/chat/completions`
+- 全仓出现的 `/v1/models` 是 `dsh-llm-pi-ai/src/discovery.ts` 里**出站**去问
+  上游厂商的客户端代码，不是本地端点
+- 正确路径：桥要实现 `/llm/v1/chat/completions` 门面，之后手机侧
+  才能用 `ProviderSetting.OpenAI(baseUrl=桥)` 或 `Model.providerOverwrite`
+
+**本轮新核实的源码事实**
+
+| 事实 | 证据 |
+|---|---|
+| `Settings` **不整体序列化**，每字段独立 `stringPreferencesKey`，读取处用 `?: 默认值` | `PreferencesStore.kt:244-280`、`:337-376` |
+| → 新增字段**天然向后兼容**，不需要迁移脚本 | 同上 |
+| `JsonInstant` 配 `ignoreUnknownKeys=true` + `encodeDefaults=true` | `utils/Json.kt:7-12` |
+| `providerOverwrite` 被 `GenerationLoop.kt:506` 等 11 处使用，默认生效 | `findProvider` 调用点清单 |
+| 例外：`ModelList.kt:335` 用 `checkOverwrite=false`（列表分组用，故意为之） | `ModelList.kt:335` |
+| `WebApiModule` 的 `route("/api")` **只占 `/api` 前缀**，桥用独立路径不冲突 | `WebApiModule.kt:140-141` |
+| 已有 `authenticate("auth-jwt")` 分支，桥可复用同一套 JWT | `WebApiModule.kt:170-186` |
+| `LocalToolOption` 是 sealed class + 50 多个 `data object`，权限敏感项独立开关 | `LocalTools.kt:132-207` |
+| → 桥的工具白名单可**直接复用**其开关语义 | 同上 |
+| `WorkspaceFileSystem` 是实例方法，每次收 `root: File`，以 `files/` 为根安全 | `WorkspaceFileSystem.kt:12-35` |
+| `NO_ALWAYS_ALLOW` 精确 **10 项**（脚本逐行枚举核对，非估算） | `ToolApprovalDefaults.kt:262-293` |
+| `Tool` 有 `systemPrompt` 字段；`needsApproval` 是 `(JsonElement)->Boolean` | `Tool.kt:12-19` |
+| `Provider.streamText()` 返回 `Flow<StreamChunk>`（不是 `stream`） | `Provider.kt:29-33` |
+| `ProviderManager.getProviderByType()` 穷尽分派 9 种 `ProviderSetting` | `ProviderManager.kt:51-64` |
+
+**阶段状态**
+
+- 阶段 0 ✅ / 阶段 1 ✅ / 阶段 3 🔶（DSH 侧完成，126 用例通过，手机侧未开始）
+
+---
+
+### 2026-11-19（第一轮）— 阶段 3 开工：DSH 侧双向工具桥落地
+
+**新增 `win-bridge/`（Host 插件包，97 个测试用例全绿）**
+
+- `lib/protocol.js` — 协议常量、trace 解析、跳数预算（循环防护）、工具名限定
+- `lib/schema.js` — DSH `ParameterSchemaSpec` ↔ 标准 JSON Schema 双向转换
+- `lib/client.js` — 出站调用，DSH 作为客户端反向调手机工具
+- `lib/index.js` — 插件入口，5 个 HTTP 端点 + 远端工具注册
+- `test/smoke.mjs`(43) / `test/client.mjs`(17) / `test/e2e.mjs`(25) / `test/host-load.mjs`(12)
+
+**架构前提修正（重要）**
+
+- 实测证伪「DSH 可作 MCP Server」：运行时只打包 `@modelcontextprotocol/client`，
+  `server`/`node`/`sdk` 未打包，全仓无自建 MCP 服务端实现
+- 实测发现 DSH 有完整的 **Typert Remote** RPC（`POST /api/<ns>/<method>` + `WS /api/remote.mux`），
+  但 `/connect` 换出的 Cookie 是**完整 owner 权限**，无降权
+- 改用挂在 `ctx.webServer` 上的极简 HTTP 桥：自动继承 DSH 端口，无需端口发现
+
+**实测记录的两个真实坑**
+
+1. `defineTool` 的 `parameters` 是**逐字段映射**，不是 `{type:'object',properties}` 包裹结构。
+   传包裹形式会报 `parameters.type must be a value schema object`，整个工具注册失败。
+2. `required` 在 DSH spec 里是**字段级 `required: true`**，在标准 JSON Schema 里是**父级数组**，
+   两侧都要搬移，漏做则模型把必填参数当可选。
+
+**新增文档**
+
+- `project-docs/PROTOCOL_SPEC.md` — 完整协议规格（含选型对比与诚实的能力边界）
+
+**RikkaHub 源码审计新结论**
+
+- `ChatToolFactory.createTools()` **是死代码**（全仓无调用点），
+  真正的工具装配在 `ChatService.kt:1721-1804`（主链路）、`:1449-1485`（rerun）等 5 条链路
+- `Tool` 数据类有 `systemPrompt` 字段（原文档漏记）
+- `needsApproval` 是 `(JsonElement) -> Boolean`，不是布尔字段
+- Android 侧已有可用的 Ktor HTTP Server 宿主（`web/Entry.kt:18-43` 的 `startWebServer`）
+
+---
+
+### 2026-11-18 — 项目初始化
+
+- 创建项目目录 `D:\AAAdeepseek\工作区\repos\rikkahub-agent-gm`
+- 创建 `project-docs/` 骨架：PROJECT_STATUS / BLOCKERS / DECISIONS / TEST_REPORT / CHANGELOG
+- 确认环境基线：无 java/adb/gradle/git，构建走 GitHub Actions（JDK 21）
+- 确认仓库已有 MCP Kotlin SDK 0.15.0 + Ktor 3.5.2
+- 记录 3 个阻塞项（无 Git、无本地编译链、无 ADB 通道）
+- 阶段 0 完成：PROJECT_AUDIT / FEATURE_MATRIX / COMPATIBILITY_REPORT / ENVIRONMENT_REPORT
+- 阶段 1 部分完成：ARCHITECTURE.md

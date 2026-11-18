@@ -1,0 +1,14 @@
+# dsh-mobile-bridge bundle patch
+#
+# 新增行必须用 `- insert:`（裸行只覆盖已有行，见项目红线）。
+#
+# 这一行把桥插件挂进 profile。默认 `enabled: false`：
+# 端点一旦挂上就会成为局域网可达的攻击面，因此必须由用户显式打开，
+# 而不是装完就默认对外监听。
+- insert:
+    - id: plugin-mobile-bridge
+      name: 'dsh-mobile-bridge'
+      config:
+        enabled: false
+        listenPath: /dsh-mobile-bridge
+        selfNodeId: windows-dsh

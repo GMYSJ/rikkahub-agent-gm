@@ -1,0 +1,652 @@
+/**
+ * dsh-mobile-bridge —— Host 入口
+ *
+ * 给 RikkaHub（Android）和 DSH（Windows）之间架一座**双向工具桥**。
+ *
+ * 为什么不用 MCP（实测结论，见 project-docs/PROTOCOL_SPEC.md）：
+ * DSH 0.2.2-rc.5 运行时只打包了 `@modelcontextprotocol/client`，
+ * `server` 根本不存在，所以「把 DSH 工具暴露成 MCP Server」这条路走不通。
+ * 因此这里不套协议，只在 DSH 自己的 webServer 上挂一组小端点。
+ *
+ * 两个方向：
+ *  - **出**：`GET <base>/tools` 列出 DSH 可见工具，`POST <base>/tools/call` 执行。
+ *    手机从这里发现并调用电脑能力。
+ *  - **入**：手机把自己的工具清单 POST 到 `<base>/register`，桥把它们
+ *    包装成 `defineTool()` 注册进 `ctx.tools`，模型从此能调手机工具。
+ *
+ * 安全模型（默认最保守）：
+ *  - 插件默认 `enabled: false`，必须显式开启才会挂载端点；
+ *  - 工具执行走 `ctx.tools.execute()`，因此 DSH 自己的审批/守卫流水线
+ *    照常生效，桥不是审批旁路；
+ *  - 入方向注册进来的工具名一律 `mcp__<node>__<tool>` 前缀，
+ *    继承 RikkaHub 侧对 MCP 工具默认要求人工批准的约定；
+ *  - 所有请求都受跳数预算约束，防止 A→B→A 循环调用。
+ *
+ * @module dsh-mobile-bridge
+ */
+
+import {
+  PROTOCOL_VERSION,
+  ERROR_CODE,
+  HEADER,
+  newTraceId,
+  parseTrace,
+  checkHopBudget,
+  okEnvelope,
+  errorEnvelope,
+  validateWireTool,
+  qualifyToolName,
+} from './protocol.js';
+import { toolSchemaToWire, wireParametersToSpec } from './schema.js';
+import { callRemoteTool, fetchRemoteTools } from './client.js';
+import { handleMessage as handleMcpMessage, RPC_ERROR, rpcError } from './mcp.js';
+
+/** 插件身份。 */
+export const name = 'dsh-mobile-bridge';
+
+/**
+ * 依赖注入：webServer 挂端点，tools 读写工具注册表。
+ * 两者都是必需 —— 缺任何一个桥都没有意义，因此让 Cordis 等待而不是半死不活。
+ */
+export const inject = ['webServer', 'tools'];
+
+/** 响应体上限，防止对端一上来就灌爆内存。 */
+const MAX_BODY_BYTES = 512 * 1024;
+
+/**
+ * 动态取 `defineTool`：宿主里有就用真的（带 schema 校验），
+ * 脱宿主跑测试时退化成恒等函数。
+ */
+let defineTool = (def) => def;
+try {
+  const mod = await import('@deepseek-ai/dsh-tools');
+  if (mod && typeof mod.defineTool === 'function') defineTool = mod.defineTool;
+} catch {
+  /* 宿主外运行：保持恒等实现 */
+}
+
+/**
+ * 读满一个请求体，超过上限立刻中止。
+ *
+ * 不用 `for await` 收集，是因为需要在超限的第一时间停止读取并断开，
+ * 而不是把整个垃圾流读完再判断。
+ *
+ * @param {import('node:http').IncomingMessage} req - HTTP 请求。
+ * @param {number} limit - 字节上限。
+ * @returns {Promise<{ok: true, text: string} | {ok: false, reason: string}>}
+ */
+function readBody(req, limit) {
+  return new Promise((resolve) => {
+    /** @type {Buffer[]} */
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    req.on('data', (chunk) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buf.length;
+      if (size > limit) {
+        finish({ ok: false, reason: `request body exceeds ${limit} bytes` });
+        req.destroy();
+        return;
+      }
+      chunks.push(buf);
+    });
+    req.on('end', () => finish({ ok: true, text: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', (err) => finish({ ok: false, reason: err instanceof Error ? err.message : String(err) }));
+  });
+}
+
+/**
+ * 发一个 JSON 响应。带 `no-store`，因为响应里可能含工作区内容。
+ *
+ * @param {import('node:http').ServerResponse} res - HTTP 响应。
+ * @param {number} status - HTTP 状态码。
+ * @param {unknown} payload - 要序列化的对象。
+ */
+function sendJson(res, status, payload) {
+  if (res.writableEnded) return;
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': String(body.length),
+    'cache-control': 'no-store',
+    'x-dsh-bridge-protocol': String(PROTOCOL_VERSION),
+  });
+  res.end(body);
+}
+
+/**
+ * 把 DSH `ToolExecutionResult` 投影成 wire 上的结果。
+ *
+ * DSH 的失败结果自带 `error` 对象和面向模型的 `content`，这里两者都保留：
+ * 手机侧既需要判断成功与否，也需要拿到可读的说明。
+ *
+ * @param {import('@deepseek-ai/dsh-tools').ToolExecutionResult} result - 单次执行结果。
+ * @returns {{ok: boolean, content: unknown[], value?: unknown, error?: {code: string, message: string}}}
+ */
+function projectExecutionResult(result) {
+  if (result === null || typeof result !== 'object') {
+    return { ok: false, content: [], error: { code: ERROR_CODE.INTERNAL, message: 'tool executor returned no result' } };
+  }
+  if (result.isError === true) {
+    const failure = result.error ?? {};
+    const message = typeof failure.message === 'string' && failure.message !== ''
+      ? failure.message
+      : 'tool execution failed';
+    return {
+      ok: false,
+      content: Array.isArray(result.content) ? result.content : [],
+      error: {
+        code: typeof failure.code === 'string' && failure.code !== '' ? failure.code : ERROR_CODE.TOOL_FAILED,
+        message,
+      },
+    };
+  }
+  return {
+    ok: true,
+    content: Array.isArray(result.content) ? result.content : [],
+    value: result.value ?? null,
+  };
+}
+
+/**
+ * 从 `ctx.tools` 当前可见集合里取出可对外暴露的工具清单。
+ *
+ * 只取全局视图（不传 scope），因为桥是部署级能力，不是某个 agent 的私产。
+ * 刻意**排除**本桥自己注册进来的远端工具，否则手机的工具会被原样
+ * 回显给手机，形成自我循环。
+ *
+ * @param {object} tools - `ctx.tools`。
+ * @param {string} marker - 用于识别「本桥注册的工具」的前缀。
+ * @returns {object[]} wire 格式的工具描述数组。
+ */
+function listExposedTools(tools, marker) {
+  let definitions = [];
+  try {
+    definitions = tools.definitions() ?? [];
+  } catch {
+    definitions = [];
+  }
+  const exposed = [];
+  for (const definition of definitions) {
+    const toolName = definition?.name;
+    if (typeof toolName !== 'string' || toolName === '') continue;
+    if (toolName.startsWith(marker)) continue;
+    exposed.push(toolSchemaToWire({
+      name: toolName,
+      description: definition.description,
+      parameters: definition.parameters,
+    }));
+  }
+  return exposed;
+}
+
+/**
+ * 挂载插件。
+ *
+ * @param {import('@deepseek-ai/cordis').Context} ctx - Cordis 上下文。
+ * @param {object} [config] - 插件配置。
+ * @param {boolean} [config.enabled] - 是否真的挂端点；默认 false。
+ * @param {string} [config.listenPath] - 端点前缀，默认 `/dsh-mobile-bridge`。
+ * @param {string} [config.selfNodeId] - 本节点标识，出现在 trace 头里。
+ * @param {string} [config.token] - 可选的共享令牌；设置后所有请求必须带 `Authorization: Bearer <token>`。
+ * @param {number} [config.timeoutMs] - 单次工具执行超时，默认 120 秒。
+ */
+export function apply(ctx, config) {
+  const cfg = config ?? {};
+
+  // 默认关闭：端点一旦挂上就是局域网可达的攻击面。
+  if (cfg.enabled !== true) {
+    ctx.logger?.info?.('dsh-mobile-bridge: disabled (set `enabled: true` to mount the endpoints)');
+    return;
+  }
+
+  const basePathRaw = typeof cfg.listenPath === 'string' && cfg.listenPath.trim() !== ''
+    ? cfg.listenPath.trim()
+    : '/dsh-mobile-bridge';
+  // webServer 要求路径无尾斜杠，这里统一抹掉，避免注册期就抛错。
+  const basePath = basePathRaw.replace(/\/+$/, '') || '/dsh-mobile-bridge';
+  const selfNodeId = typeof cfg.selfNodeId === 'string' && cfg.selfNodeId.trim() !== ''
+    ? cfg.selfNodeId.trim()
+    : 'windows-dsh';
+  const token = typeof cfg.token === 'string' && cfg.token.trim() !== '' ? cfg.token.trim() : null;
+  const timeoutMs = typeof cfg.timeoutMs === 'number' && Number.isFinite(cfg.timeoutMs) && cfg.timeoutMs > 0
+    ? Math.min(Math.round(cfg.timeoutMs), 600_000)
+    : 120_000;
+
+  /** 本桥注册的工具名前缀，用于把它们从「可暴露清单」里排除。 */
+  const REGISTERED_MARKER = 'mcp__';
+
+  /** 入方向注册的 disposer 表，卸载时统一回收。 */
+  const registeredDisposers = [];
+
+  /**
+   * 远端节点登记表：node 标识 → `{ baseUrl, token }`。
+   *
+   * 入方向注册的工具在执行时要回到提供它的节点，所以必须记住
+   * 这个节点当时是从哪个地址、用哪个令牌注册上来的。
+   *
+   * @type {Map<string, {baseUrl: string | null, token: string | null}>}
+   */
+  const remoteNodes = new Map();
+
+  /** 已注册工具名 → 提供它的节点与原始工具名。 */
+  const toolOwners = new Map();
+
+  /**
+   * 鉴权。没配 token 时视为「已在可信网络内」，与 DSH 自身 webServer
+   * 不做认证的现状保持一致 —— 真正的边界由外层网关（局域网 TLS / 隧道）提供。
+   *
+   * @param {import('node:http').IncomingMessage} req - HTTP 请求。
+   * @returns {{ok: true} | {ok: false, reason: string}}
+   */
+  const authorize = (req) => {
+    if (token === null) return { ok: true };
+    const raw = req.headers[HEADER.AUTHORIZATION];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value !== 'string') return { ok: false, reason: 'missing Authorization header' };
+    const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+    if (match === null) return { ok: false, reason: 'Authorization must be `Bearer <token>`' };
+    // 长度不等直接拒绝，避免逐字符比较泄露长度信息。
+    const given = match[1];
+    if (given.length !== token.length) return { ok: false, reason: 'invalid token' };
+    let diff = 0;
+    for (let i = 0; i < given.length; i += 1) diff |= given.charCodeAt(i) ^ token.charCodeAt(i);
+    return diff === 0 ? { ok: true } : { ok: false, reason: 'invalid token' };
+  };
+
+  /**
+   * 统一的入站前处理：鉴权 + 跳数预算。
+   *
+   * @param {import('node:http').IncomingMessage} req - HTTP 请求。
+   * @param {import('node:http').ServerResponse} res - HTTP 响应。
+   * @returns {{ok: true, trace: object} | {ok: false}}
+   */
+  const preflight = (req, res) => {
+    const auth = authorize(req);
+    if (!auth.ok) {
+      sendJson(res, 401, errorEnvelope(ERROR_CODE.UNAUTHORIZED, auth.reason));
+      return { ok: false };
+    }
+    const trace = parseTrace(req.headers);
+    const budget = checkHopBudget(trace);
+    if (!budget.ok) {
+      sendJson(res, 508, errorEnvelope(budget.code, budget.reason, { hopCount: trace.hopCount }));
+      return { ok: false };
+    }
+    return { ok: true, trace };
+  };
+
+  /**
+   * 统一的工具执行：两个端点（原生 `/tools/call` 与 MCP `/mcp`）共用。
+   *
+   * 关键：走 `ctx.tools.execute()`，**不是审批旁路** —— DSH 的
+   * pre-execute → guards → execute → post-execute 流水线照常生效。
+   *
+   * @param {string} toolName - 工具名。
+   * @param {unknown} args - 参数。
+   * @param {import('node:http').ServerResponse} res - 用于在客户端断开时取消。
+   * @returns {Promise<{ok: boolean, value?: unknown, content: unknown[], error?: {code: string, message: string}}>}
+   */
+  const executeTool = async (toolName, args, res) => {
+    const callId = `bridge-${newTraceId()}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(new Error('bridge tool timeout')), timeoutMs);
+    // 对端断开时立刻取消，别让工具在后台瞎跑。
+    res.on('close', () => controller.abort(new Error('client disconnected')));
+
+    try {
+      const batch = await ctx.tools.execute({
+        calls: [{
+          type: 'tool-call',
+          id: callId,
+          name: toolName,
+          arguments: JSON.stringify(args ?? {}),
+        }],
+        signal: controller.signal,
+      });
+      const first = Array.isArray(batch?.results) ? batch.results[0] : undefined;
+      if (first === undefined) {
+        return {
+          ok: false,
+          content: [],
+          error: { code: ERROR_CODE.INTERNAL, message: 'tool executor returned no result for the call' },
+        };
+      }
+      return projectExecutionResult(first.result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        content: [],
+        error: {
+          code: controller.signal.aborted ? ERROR_CODE.TIMEOUT : ERROR_CODE.TOOL_FAILED,
+          message,
+        },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** @type {Array<() => void>} */
+  const disposers = [];
+
+  // ---------------------------------------------------------------- 出方向
+
+  /**
+   * `GET <base>/tools` —— 列出可调用的 DSH 工具。
+   */
+  const listRoute = () => ({
+    kind: /** @type {const} */ ('prefix'),
+    path: basePath,
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://bridge.invalid');
+      const tail = url.pathname.slice(basePath.length).replace(/\/+$/, '');
+
+      if (tail === '/tools' && req.method === 'GET') {
+        const gate = preflight(req, res);
+        if (!gate.ok) return;
+        const tools = listExposedTools(ctx.tools, REGISTERED_MARKER);
+        sendJson(res, 200, okEnvelope({
+          protocolVersion: PROTOCOL_VERSION,
+          nodeId: selfNodeId,
+          tools,
+        }));
+        return;
+      }
+
+      if (tail === '/health' && req.method === 'GET') {
+        sendJson(res, 200, okEnvelope({
+          protocolVersion: PROTOCOL_VERSION,
+          nodeId: selfNodeId,
+          authRequired: token !== null,
+        }));
+        return;
+      }
+
+      if (tail === '/tools/call' && req.method === 'POST') {
+        const gate = preflight(req, res);
+        if (!gate.ok) return;
+
+        const body = await readBody(req, MAX_BODY_BYTES);
+        if (!body.ok) {
+          sendJson(res, 413, errorEnvelope(ERROR_CODE.PAYLOAD_TOO_LARGE, body.reason));
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(body.text);
+        } catch {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body is not valid JSON'));
+          return;
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body must be a JSON object'));
+          return;
+        }
+
+        const toolName = typeof parsed.tool === 'string' ? parsed.tool.trim() : '';
+        if (toolName === '') {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'missing `tool`'));
+          return;
+        }
+        // 不允许通过桥调用本桥注册的远端工具：那会让请求绕回自己。
+        if (toolName.startsWith(REGISTERED_MARKER)) {
+          sendJson(res, 403, errorEnvelope(
+            ERROR_CODE.FORBIDDEN,
+            'refusing to dispatch a bridge-registered remote tool through the bridge (loop guard)',
+          ));
+          return;
+        }
+
+        const args = parsed.arguments === undefined ? {} : parsed.arguments;
+        const projected = await executeTool(toolName, args, res);
+        sendJson(res, projected.ok ? 200 : 502, {
+          ok: projected.ok,
+          traceId: gate.trace.traceId,
+          result: projected.ok ? projected.value : undefined,
+          content: projected.content,
+          error: projected.ok ? undefined : projected.error,
+        });
+        return;
+      }
+
+      // ------------------------------------------------------------ 入方向
+
+      if (tail === '/register' && req.method === 'POST') {
+        const gate = preflight(req, res);
+        if (!gate.ok) return;
+
+        const body = await readBody(req, MAX_BODY_BYTES);
+        if (!body.ok) {
+          sendJson(res, 413, errorEnvelope(ERROR_CODE.PAYLOAD_TOO_LARGE, body.reason));
+          return;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(body.text);
+        } catch {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body is not valid JSON'));
+          return;
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body must be a JSON object'));
+          return;
+        }
+
+        const nodeSlug = typeof parsed.node === 'string' ? parsed.node.trim() : '';
+        if (nodeSlug === '') {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'missing `node`'));
+          return;
+        }
+        const rawTools = Array.isArray(parsed.tools) ? parsed.tools : [];
+        if (rawTools.length > 200) {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'too many tools in one registration (limit 200)'));
+          return;
+        }
+        // 节点回连地址：注册方必须提供，否则注册进来的工具执行时无路可走。
+        const nodeBaseUrlRaw = typeof parsed.baseUrl === 'string' ? parsed.baseUrl.trim() : '';
+        if (nodeBaseUrlRaw === '') {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'missing `baseUrl` (the node must be reachable for callback)'));
+          return;
+        }
+        if (!/^https?:\/\//i.test(nodeBaseUrlRaw)) {
+          sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, '`baseUrl` must be an absolute http(s) URL'));
+          return;
+        }
+        const nodeToken = typeof parsed.token === 'string' && parsed.token.trim() !== ''
+          ? parsed.token.trim()
+          : null;
+
+        const accepted = [];
+        const rejected = [];
+        for (const raw of rawTools) {
+          const verdict = validateWireTool(raw);
+          if (!verdict.ok) {
+            rejected.push({ name: raw?.name ?? null, reason: verdict.reason });
+            continue;
+          }
+          const localName = qualifyToolName(nodeSlug, verdict.tool.name);
+          const { spec, lossy } = wireParametersToSpec(verdict.tool.parameters);
+          const remoteToolName = verdict.tool.name;
+
+          // 同名重注册：先撤旧的，否则 tools.register 会因冲突整批失败。
+          const previous = toolOwners.get(localName);
+          if (previous !== undefined && typeof previous.dispose === 'function') {
+            try {
+              previous.dispose();
+            } catch {
+              /* 旧注册收回失败不阻断新注册 */
+            }
+            toolOwners.delete(localName);
+          }
+
+          try {
+            const dispose = ctx.tools.register(defineTool({
+              name: localName,
+              description: verdict.tool.description !== ''
+                ? verdict.tool.description
+                : `Remote tool \`${remoteToolName}\` on node \`${nodeSlug}\`.`,
+              parameters: spec,
+              output: {
+                schema: { type: 'json' },
+                render: (_args, value) => [{
+                  type: 'text',
+                  text: typeof value === 'string' ? value : JSON.stringify(value ?? null, null, 2),
+                }],
+              },
+              async execute(args, exec) {
+                const owner = remoteNodes.get(nodeSlug);
+                if (owner === undefined || owner.baseUrl === null) {
+                  throw new Error(
+                    `remote node \`${nodeSlug}\` is not registered; cannot reach tool \`${remoteToolName}\``,
+                  );
+                }
+                const outcome = await callRemoteTool({
+                  baseUrl: owner.baseUrl,
+                  selfNodeId,
+                  targetNodeId: nodeSlug,
+                  tool: remoteToolName,
+                  args,
+                  trace: { traceId: newTraceId(), hopCount: 0 },
+                  token: owner.token,
+                  signal: exec?.signal,
+                  timeoutMs,
+                });
+                if (!outcome.ok) {
+                  // 抛出而不是返回错误值：让 DSH 的失败流水线接管，
+                  // 保住「失败结果带结构化错误」的语义。
+                  throw new Error(`${outcome.code}: ${outcome.message}`);
+                }
+                return outcome.value;
+              },
+            }));
+            toolOwners.set(localName, { nodeSlug, remoteToolName, dispose });
+            registeredDisposers.push(dispose);
+            accepted.push({ name: localName, lossy });
+          } catch (err) {
+            rejected.push({
+              name: verdict.tool.name,
+              reason: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        if (accepted.length > 0) {
+          remoteNodes.set(nodeSlug, { baseUrl: nodeBaseUrlRaw.replace(/\/+$/, ''), token: nodeToken });
+        }
+
+        sendJson(res, 200, okEnvelope({
+          node: nodeSlug,
+          accepted,
+          rejected,
+        }));
+        return;
+      }
+
+      // `GET <base>/nodes` —— 让手机确认电脑记住了哪些节点（排障用）。
+      if (tail === '/nodes' && req.method === 'GET') {
+        const gate = preflight(req, res);
+        if (!gate.ok) return;
+        sendJson(res, 200, okEnvelope({
+          nodes: [...remoteNodes.entries()].map(([node, info]) => ({
+            node,
+            baseUrl: info.baseUrl,
+            toolCount: [...toolOwners.values()].filter((owner) => owner.nodeSlug === node).length,
+          })),
+        }));
+        return;
+      }
+
+      // ------------------------------------------------------- MCP 兼容端点
+      //
+      // 让 RikkaHub 的 McpManager **零代码**接入：
+      // 手机的 StreamableHttpClientTransport 直接指向 `<base>/mcp` 即可。
+      // 它比让手机实现本桥的私有协议省得多（手机侧现成有完整 MCP 客户端）。
+      if (tail === '/mcp' && req.method === 'POST') {
+        const gate = preflight(req, res);
+        if (!gate.ok) return;
+
+        const body = await readBody(req, MAX_BODY_BYTES);
+        if (!body.ok) {
+          sendJson(res, 413, rpcError(null, RPC_ERROR.INVALID_REQUEST, body.reason));
+          return;
+        }
+
+        let message;
+        try {
+          message = JSON.parse(body.text);
+        } catch {
+          sendJson(res, 200, rpcError(null, RPC_ERROR.PARSE_ERROR, 'request body is not valid JSON'));
+          return;
+        }
+
+        // Streamable HTTP 允许批量（数组）请求。
+        const isBatch = Array.isArray(message);
+        const messages = isBatch ? message : [message];
+
+        const responses = [];
+        for (const one of messages) {
+          const response = await handleMcpMessage(one, {
+            listTools: () => listExposedTools(ctx.tools, REGISTERED_MARKER),
+            callTool: async (toolName, args) => executeTool(toolName, args, res),
+          });
+          if (response !== null) responses.push(response);
+        }
+
+        // 全是通知 → MCP 规范要求 202 Accepted 且无正文。
+        if (responses.length === 0) {
+          res.writeHead(202, { 'cache-control': 'no-store' });
+          res.end();
+          return;
+        }
+
+        sendJson(res, 200, isBatch ? responses : responses[0]);
+        return;
+      }
+
+      // MCP 客户端有时会先发 GET 探测（服务端推送流的通道）。本实现不提供推送。
+      if (tail === '/mcp' && req.method === 'GET') {
+        sendJson(res, 405, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'this MCP endpoint does not provide a server push stream; use POST'));
+        return;
+      }
+
+      sendJson(res, 404, errorEnvelope(ERROR_CODE.NOT_FOUND, `no such bridge endpoint: ${url.pathname}`));
+    },
+  });
+
+  disposers.push(ctx.webServer.register(listRoute()));
+
+  ctx.logger?.info?.(`dsh-mobile-bridge: mounted at ${basePath} (node=${selfNodeId}, auth=${token !== null ? 'token' : 'none'})`);
+
+  // 统一回收：端点 + 所有入方向注册的工具。
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      toolOwners.clear();
+      remoteNodes.clear();
+      for (const dispose of registeredDisposers.splice(0)) {
+        try {
+          if (typeof dispose === 'function') dispose();
+        } catch {
+          /* 卸载失败不阻断其它清理 */
+        }
+      }
+      for (const dispose of disposers.splice(0)) {
+        try {
+          if (typeof dispose === 'function') dispose();
+        } catch {
+          /* 同上 */
+        }
+      }
+    }, 'dsh-mobile-bridge: teardown');
+  }
+}
