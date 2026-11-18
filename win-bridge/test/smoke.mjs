@@ -220,6 +220,27 @@ test('toolSchemaToWire 产出完整描述', () => {
   assert.equal(wire.parameters.properties.todos.items.type, 'object');
 });
 
+test('【回归】已编译的 JSON Schema 必须原样透传，不能被二次包装', () => {
+  // ctx.tools.schemas() 返回的 parameters 已经是 {type:'object', properties:{...}}
+  // —— 这是 defineTool 编译后的形状。绝不能再当字段映射包一层。
+  const compiled = {
+    name: 'remote_list_hosts',
+    description: 'list hosts',
+    parameters: {
+      type: 'object',
+      properties: { detail: { type: 'boolean' } },
+      required: ['detail'],
+    },
+  };
+  const wire = toolSchemaToWire(compiled);
+  assert.deepEqual(wire.parameters.required, ['detail']);
+  assert.equal(wire.parameters.properties.detail.type, 'boolean');
+  // 关键：不能出现 type/properties/required 这三个「假字段」
+  assert.equal('type' in wire.parameters.properties, false);
+  assert.equal('properties' in wire.parameters.properties, false);
+  assert.equal(Object.keys(wire.parameters.properties).join(','), 'detail');
+});
+
 console.log('\n== schema: JSON Schema -> DSH spec（入方向）==');
 test('父级 required 数组还原成 required: true', () => {
   const spec = jsonSchemaToSpec({

@@ -188,7 +188,7 @@ $env:ELECTRON_RUN_AS_NODE='1'
 & $env:DSH_NODE_EXECUTABLE "test\host-load.mjs"
 ```
 
-当前：**43 + 17 + 25 + 29 + 28 + 12 = 154 个用例全部通过**。
+当前：**44 + 17 + 25 + 29 + 28 + 12 = 155 个用例全部通过**。
 
 ## 已知限制
 

@@ -127,14 +127,29 @@ export function toolParametersToJsonSchema(parameters) {
 /**
  * 把一份 `ToolSchema`（`{ name, description, parameters }`）转成 wire 上的工具描述。
  *
+ * **关键（踩过坑）**：`ctx.tools.schemas()` 返回的 `parameters` **已经是标准 JSON Schema**
+ * （形如 `{type:'object', properties:{...}, required:[...]}`）—— 这是 `defineTool`
+ * 把字段映射编译后的结果。所以它应当**原样透传**。
+ *
+ * 早期这里误调了 `toolParametersToJsonSchema()`，把整个 schema 当成「字段映射」
+ * 再包一层，结果 `properties` 变成 `{type:{}, properties:{}, required:{}}` ——
+ * 手机看到的是三个假字段，于是给工具传错参数（例如给 `remote_list_hosts`
+ * 传 `{query, scope}`，其实它要 `{}`）。这是一个**只有真机调用才暴露**的 bug：
+ * 工具能列出来、连接也通，但所有带参工具都调用失败。
+ *
  * @param {{name: string, description?: string, parameters?: unknown}} schema - 来自 `ctx.tools.schemas()` 的一项。
  * @returns {{name: string, description: string, parameters: object}}
  */
 export function toolSchemaToWire(schema) {
+  const raw = schema?.parameters;
+  // 已经是 object 根的 JSON Schema → 原样透传。
+  const parameters = (isPlainObject(raw) && raw.type === 'object' && isPlainObject(raw.properties))
+    ? raw
+    : toolParametersToJsonSchema(raw);
   return {
     name: String(schema?.name ?? ''),
     description: typeof schema?.description === 'string' ? schema.description : '',
-    parameters: toolParametersToJsonSchema(schema?.parameters),
+    parameters,
   };
 }
 

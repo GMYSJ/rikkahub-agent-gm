@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### 2026-11-19（第七轮）— 【真机暴露的严重 bug】工具 schema 被二次包装
+
+**背景**：用户手机已能看到工具并实际调用。`/diagnostics` 显示 9 次调用中 8 次失败，
+1 次 `memory_search` 成功。逐条复现真实错误后发现根因在桥侧。
+
+**根因**：`ctx.tools.schemas()` 返回的 `parameters` **已经是编译后的标准 JSON Schema**
+（`{type:'object', properties:{...}, required:[...]}`），但 `toolSchemaToWire()` 又调用了
+`toolParametersToJsonSchema()` 把它当成字段映射再包一层，结果：
+
+```
+properties: { type:{}, properties:{}, required:{} }   ← 三个假字段
+```
+
+手机看到的是这三个假参数，于是给工具传错参数：
+- `remote_list_hosts` 收到 `{query, scope}`，实际要求 `{}`
+- 所有带参工具都调用失败
+
+**这个 bug 只有真机调用才暴露**：工具能列出来、连接也通、MCP 握手正常，
+纯离线测试全绿——因为 mock 里的 `parameters` 恰好是未编译的字段映射形状。
+
+**修复**：`toolSchemaToWire()` 检测 object 根 JSON Schema 时原样透传，
+只在确实是字段映射时才转换。新增回归测试。
+
+**测试**：smoke 43→44，总计 154→155，全绿。
+
+> 注意：修复需重启 DSH 生效。本轮重启已完成。
+
+---
+
 ### 2026-11-19（第六轮）— 调用审计端点（区分「看见」与「调通」）
 
 **背景**：用户报告手机能看到工具，但无法据此确认是否真的调用成功——
