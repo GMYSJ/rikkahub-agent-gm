@@ -736,22 +736,35 @@ export function apply(ctx, config) {
             connection: 'keep-alive',
             'x-dsh-bridge-protocol': String(PROTOCOL_VERSION),
           });
-          /** @type {{roleSent: boolean, pendingUsage: object | undefined, finished: boolean}} */
-          const state = { roleSent: false, pendingUsage: undefined, finished: false };
+          /** @type {{roleSent: boolean, pendingUsage: object | undefined, finished: boolean, namedToolIds: Set<string>, reasoningBuffer: string, hasText: boolean}} */
+          const state = {
+            roleSent: false, pendingUsage: undefined, finished: false,
+            namedToolIds: new Set(), reasoningBuffer: '', hasText: false,
+          };
+          // 所有帧共享同一个 ctx 对象：reasoningBuffer / namedToolIds / hasText
+          // 必须跨帧累积，否则思考兜底与 tool name 去重都会失效。
+          const sseCtx = {
+            id, model: modelName,
+            get roleSent() { return state.roleSent; },
+            set roleSent(v) { state.roleSent = v; },
+            get pendingUsage() { return state.pendingUsage; },
+            set pendingUsage(v) { state.pendingUsage = v; },
+            get namedToolIds() { return state.namedToolIds; },
+            get reasoningBuffer() { return state.reasoningBuffer; },
+            set reasoningBuffer(v) { state.reasoningBuffer = v; },
+            get hasText() { return state.hasText; },
+            set hasText(v) { state.hasText = v; },
+          };
           try {
             for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
-              const out = chunkToSse(chunk, { id, model: modelName, roleSent: state.roleSent, pendingUsage: state.pendingUsage });
-              state.roleSent = out.roleSent;
-              state.pendingUsage = out.pendingUsage;
+              const out = chunkToSse(chunk, sseCtx);
               for (const frame of out.frames) res.write(frame);
               if (out.finishReason !== null) state.finished = true;
             }
             // 兜底：如果流结束时 DSH 没有发 finish 帧，我们补一个，
             // 否则客户端会一直等 [DONE]。
             if (!state.finished) {
-              for (const frame of chunkToSse({ type: 'finish', reason: 'stop' }, {
-                id, model: modelName, roleSent: state.roleSent, pendingUsage: state.pendingUsage,
-              }).frames) res.write(frame);
+              for (const frame of chunkToSse({ type: 'finish', reason: 'stop' }, sseCtx).frames) res.write(frame);
             }
             res.write(SSE_DONE);
           } catch (err) {

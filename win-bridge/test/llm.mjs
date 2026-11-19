@@ -158,6 +158,22 @@ test('finish 带 finish_reason', () => {
   });
   assert.equal(parseFrame(r.frames[0]).choices[0].finish_reason, 'stop');
 });
+test('【回归】pi-ai 每分片都带 name 时，只发第一帧（防工具名重复拼接）', () => {
+  const ctx = { id: 'x', model: 'm', roleSent: true, namedToolIds: new Set() };
+  // 模拟 pi-ai/workbuddy：3 个分片每个都带 name
+  const f1 = chunkToSse({ type: 'tool-call-delta', index: 0, id: 'call_1', name: 'workspace_read_folder', argumentsDelta: '{"p' }, ctx);
+  const f2 = chunkToSse({ type: 'tool-call-delta', index: 0, id: 'call_1', name: 'workspace_read_folder', argumentsDelta: 'ath":' }, ctx);
+  const f3 = chunkToSse({ type: 'tool-call-delta', index: 0, id: 'call_1', name: 'workspace_read_folder', argumentsDelta: '"/ws"}' }, ctx);
+  const names = [...f1.frames, ...f2.frames, ...f3.frames]
+    .map((f) => parseFrame(f).choices[0].delta.tool_calls?.[0]?.function?.name)
+    .filter(Boolean);
+  assert.deepEqual(names, ['workspace_read_folder'], 'name 只能出现一次，否则客户端累加成重复工具名');
+  const args = [...f1.frames, ...f2.frames, ...f3.frames]
+    .map((f) => parseFrame(f).choices[0].delta.tool_calls?.[0]?.function?.arguments ?? '')
+    .join('');
+  assert.equal(args, '{"path":"/ws"}', '参数增量必须完整拼接');
+});
+
 test('finish reason 为 error 对象时提取错误文本（429 限流等）', () => {
   const reason = {
     kind: 'error',

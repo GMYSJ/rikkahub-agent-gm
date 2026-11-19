@@ -130,10 +130,25 @@ export function chunkToSse(chunk, ctx) {
       frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { role: 'assistant', content: '' } }));
       roleSent = true;
     }
+    /**
+     * 关键：name 只能发一次！
+     *
+     * pi-ai 适配器（workbuddy 用）的每个 tool-call-delta 分片都带 name，
+     * 而 OpenAI 流式解析器会把每个 delta 的 function.name 累加，
+     * 导致 "workspace_read_folderworkspace_read_folder..." 重复拼接 → tool_not_found。
+     *
+     * 用 namedToolIds 跟踪：同一 tool id 的 name 只发第一帧，
+     * 后续帧只发 arguments 增量（标准 OpenAI 行为）。
+     */
+    if (ctx.namedToolIds === undefined) ctx.namedToolIds = new Set();
+    const toolKey = String(chunk.id ?? chunk.index ?? '');
+    const shouldSendName = chunk.name !== undefined && !ctx.namedToolIds.has(toolKey);
+    if (shouldSendName) ctx.namedToolIds.add(toolKey);
+
     /** @type {object} */
     const toolCall = { index: chunk.index ?? 0 };
     if (chunk.id !== undefined) toolCall.id = chunk.id;
-    if (chunk.name !== undefined) {
+    if (shouldSendName) {
       toolCall.type = 'function';
       toolCall.function = { name: chunk.name, arguments: chunk.argumentsDelta ?? '' };
     } else if (chunk.argumentsDelta !== undefined) {
