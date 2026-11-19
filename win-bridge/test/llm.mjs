@@ -15,6 +15,9 @@ import {
   normalizeUsage,
   openAiRequestToGenerateOptions,
   extractFinishError,
+  truncateContentBlocks,
+  MAX_TOOL_RESULT_CHARS,
+  MAX_FORWARDED_TOOLS,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -364,10 +367,35 @@ test('【回归】工具超限时截断，且优先保留 mcp__ 电脑工具', (
     tools,
   });
   assert.equal(r.ok, true);
-  assert.equal(r.options.tools.length, 40, '不得超过上限');
-  assert.equal(r.droppedTools, 138);
+  assert.equal(r.options.tools.length, MAX_FORWARDED_TOOLS, '不得超过上限');
+  assert.equal(r.droppedTools, 178 - MAX_FORWARDED_TOOLS);
   const names = r.options.tools.map((t) => t.name);
   assert.equal(names.filter((n) => n.startsWith('mcp__')).length, 28, '电脑工具必须全保留');
+});
+test('【回归】超长工具结果被截断（防上下文爆炸致模型退化）', () => {
+  const huge = 'x'.repeat(17_997);
+  const r = openAiRequestToGenerateOptions({
+    model: 'm',
+    messages: [
+      { role: 'assistant', tool_calls: [{ id: 'c1', function: { name: 't', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: huge },
+    ],
+  });
+  assert.equal(r.ok, true);
+  const tool = r.options.messages.find((m) => m.role === 'tool');
+  const text = tool.content[0].text;
+  assert.ok(text.length < huge.length, '必须截断');
+  assert.ok(text.length <= MAX_TOOL_RESULT_CHARS + 100, '截断后接近上限');
+  assert.match(text, /已截断/, '必须标注截断');
+});
+test('truncateContentBlocks 不动短文本与非文本块', () => {
+  const blocks = [
+    { type: 'text', text: 'short' },
+    { type: 'tool-call', id: 'x', name: 'n', arguments: '{}' },
+  ];
+  const out = truncateContentBlocks(blocks, 4_000);
+  assert.equal(out[0].text, 'short');
+  assert.equal(out[1].type, 'tool-call');
 });
 test('工具未超限时不截断', () => {
   const tools = [{ type: 'function', function: { name: 'a', parameters: {} } }];

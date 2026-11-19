@@ -31,7 +31,40 @@ export const CHUNK_ID_PREFIX = 'dshbridge';
  * （中文变英文、陷入工具循环），0 工具时正常。
  * 40 是一个保守上限：足够覆盖电脑侧 28 个工具 + 少量手机工具。
  */
-export const MAX_FORWARDED_TOOLS = 40;
+export const MAX_FORWARDED_TOOLS = 120;
+
+/**
+ * 单条工具结果允许的最大字符数，超出部分截断。
+ *
+ * 实测：单条工具结果可达 17997 字符；多轮累积 154 条消息共 106764 字符
+ * （约 30K tokens）后，模型会退化成英文长篇推理并陷入工具循环。
+ * 4000 足够保留结构化结果的关键部分，又不会撑爆上下文。
+ */
+export const MAX_TOOL_RESULT_CHARS = 4_000;
+
+/** 单条历史 assistant 消息允许的最大字符数（比工具结果宽松，保留上下文语义）。 */
+export const MAX_ASSISTANT_CHARS = 8_000;
+
+/**
+ * 截断一个 content block 数组里的超长文本块。
+ *
+ * @param {Array<object>} blocks - 内容块数组。
+ * @param {number} maxChars - 单个文本块的最大字符数。
+ * @returns {Array<object>} 截断后的数组（不修改入参）。
+ */
+export function truncateContentBlocks(blocks, maxChars) {
+  if (!Array.isArray(blocks)) return blocks;
+  return blocks.map((b) => {
+    if (b === null || typeof b !== 'object') return b;
+    if (b.type !== 'text' || typeof b.text !== 'string') return b;
+    if (b.text.length <= maxChars) return b;
+    const omitted = b.text.length - maxChars;
+    return {
+      ...b,
+      text: `${b.text.slice(0, maxChars)}\n…[已截断 ${omitted} 字符，原长 ${b.text.length}]`,
+    };
+  });
+}
 
 /**
  * 生成响应 id。
@@ -347,13 +380,19 @@ export function openAiRequestToGenerateOptions(body) {
       messages.push({
         id: msgId,
         role: 'assistant',
-        content: assistantContent,
+        content: truncateContentBlocks(assistantContent, MAX_ASSISTANT_CHARS),
         source: { kind: 'model', provider: providerKey, model: modelName },
       });
     } else if (role === 'tool') {
       // ToolResultMessage = { id, role:'tool', content, source:{kind:'tool',callId}, toolCallId, isError? }
       // （dsh-llm/src/message.ts:173-180, 29-32）
+      //
+      // **超长工具结果必须截断**：实测单条工具结果可达 18K 字符，
+      // 多轮累积后整个请求达 100K+ 字符（约 30K tokens），
+      // 模型上下文被撑爆后退化成英文长篇推理并陷入循环
+      // （用户现象：「开始正常，某个调用之后突然爆一大堆英文」）。
       const callId = typeof m.tool_call_id === 'string' ? m.tool_call_id : '';
+      contentBlocks = truncateContentBlocks(contentBlocks, MAX_TOOL_RESULT_CHARS);
       messages.push({
         id: msgId,
         role: 'tool',
