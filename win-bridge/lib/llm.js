@@ -275,6 +275,36 @@ export function extractFinishError(reason) {
 }
 
 /**
+ * 把 DSH / 上游抛出的技术性错误翻译成用户能看懂的中文说明。
+ *
+ * 背景：模型有时把工具调用的 JSON 参数吐一半就停下，
+ * pi-ai 适配器会抛 `MALFORMED_RESPONSE`（dsh-llm-pi-ai/src/stream.ts:227-228），
+ * 原文是 "Expected ':' after property name in JSON at position 9" 这种，
+ * 用户完全不知道发生了什么、也不知道该怎么办。
+ *
+ * @param {string} raw - 原始错误文本。
+ * @returns {string} 友好说明（保留原始信息便于排障）。
+ */
+export function friendlyLlmError(raw) {
+  const text = String(raw ?? '');
+  if (text === '') return '模型调用失败（无详细信息）';
+  if (text.includes('MALFORMED_RESPONSE') || /Expected .* in JSON|Unexpected end of JSON|invalid JSON/i.test(text)) {
+    return `模型生成工具参数时被截断或格式不完整，本次调用作废。`
+      + `通常重新发送即可；若反复出现，请换模型或把任务拆小。原始信息：${text}`;
+  }
+  if (text.includes('EMPTY_RESPONSE')) {
+    return `模型没有返回任何内容（可能是思考耗尽了 token 预算）。建议提高 max_tokens 或换模型。原始信息：${text}`;
+  }
+  if (/\b429\b|rate.?limit|quota/i.test(text)) {
+    return `模型被限流或额度不足，请稍后重试或换模型。原始信息：${text}`;
+  }
+  if (/context|token.*(limit|exceed)|too long/i.test(text)) {
+    return `对话上下文超出模型上限。建议新建对话或缩短历史。原始信息：${text}`;
+  }
+  return text;
+}
+
+/**
  * DSH FinishReason → OpenAI finish_reason。
  *
  * OpenAI 标准值：stop / length / tool_calls / content_filter / function_call

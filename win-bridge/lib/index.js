@@ -50,6 +50,7 @@ import {
   normalizeUsage,
   mapFinishReason,
   extractFinishError,
+  friendlyLlmError,
 } from './llm.js';
 
 /**
@@ -788,8 +789,8 @@ export function apply(ctx, config) {
             res.write(SSE_DONE);
           } catch (err) {
             // 流中途出错：不能只写 [DONE]，客户端需要知道出错了。
-            const message = err instanceof Error ? err.message : String(err);
-            res.write(sseFrameForError(id, modelName, message));
+            const raw = err instanceof Error ? err.message : String(err);
+            res.write(sseFrameForError(id, modelName, friendlyLlmError(raw)));
             res.write(SSE_DONE);
           } finally {
             res.end();
@@ -850,8 +851,8 @@ export function apply(ctx, config) {
             ...(usage !== undefined ? { usage } : {}),
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          sendJson(res, 502, errorEnvelope(ERROR_CODE.TOOL_FAILED, message));
+          const raw = err instanceof Error ? err.message : String(err);
+          sendJson(res, 502, errorEnvelope(ERROR_CODE.TOOL_FAILED, friendlyLlmError(raw)));
         }
         return;
       }

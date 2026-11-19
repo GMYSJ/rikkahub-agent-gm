@@ -19,6 +19,7 @@ import {
   MAX_TOOL_RESULT_CHARS,
   MAX_FORWARDED_TOOLS,
   MIN_MAX_TOKENS,
+  friendlyLlmError,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -189,6 +190,17 @@ test('【回归】pi-ai 每分片都带 name 时，只发第一帧（防工具�
   assert.equal(args, '{"path":"/ws"}', '参数增量必须完整拼接');
 });
 
+test('技术性错误翻译成中文说明（MALFORMED_RESPONSE 等）', () => {
+  const malformed = friendlyLlmError(
+    'Tool call "terminal_probe_placeholder": Expected \':\' after property name in JSON at position 9',
+  );
+  assert.match(malformed, /截断|不完整/);
+  assert.match(malformed, /重新发送/);
+  const quota = friendlyLlmError('429: quota_exceeded');
+  assert.match(quota, /限流|额度/);
+  const empty = friendlyLlmError('some EMPTY_RESPONSE case');
+  assert.match(empty, /没有返回任何内容/);
+});
 test('finish reason 为 error 对象时提取错误文本（429 限流等）', () => {
   const reason = {
     kind: 'error',
