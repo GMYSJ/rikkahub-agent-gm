@@ -192,6 +192,9 @@ export function chunkToSse(chunk, ctx) {
      * 用 namedToolIds 跟踪：同一 tool id 的 name 只发第一帧，
      * 后续帧只发 arguments 增量（标准 OpenAI 行为）。
      */
+    // 标记本轮有工具调用：这样的轮次不需要"只输出了思考"的提示，
+    // 因为对话还没结束，工具结果会驱动下一轮继续生成正文。
+    ctx.hasToolCall = true;
     if (ctx.namedToolIds === undefined) ctx.namedToolIds = new Set();
     const toolKey = String(chunk.id ?? chunk.index ?? '');
     const shouldSendName = chunk.name !== undefined && !ctx.namedToolIds.has(toolKey);
@@ -219,8 +222,11 @@ export function chunkToSse(chunk, ctx) {
     // **绝不把思考当正文发出去**——那正是用户看到的「突然爆一大堆英文」，
     // 因为模型的内部推理是英文的。思考内容已通过 reasoning_content 分片
     // 发出，客户端（RikkaHub）有自己的思考区可展示。
-    // 这里只在「什么都没输出」时给一句明确提示，避免用户面对空白。
-    if (!ctx.hasText && errText === null) {
+    //
+    // 但**有工具调用的轮次不插提示**：那是 agent 循环的中间轮，
+    // 工具结果会驱动下一轮继续输出正文，此时插提示会打断正常流程
+    // （用户实测：提示语出现在工具调用之后、真正回答之前）。
+    if (!ctx.hasText && errText === null && ctx.hasToolCall !== true) {
       const hadReasoning = (ctx.reasoningBuffer || '') !== '';
       if (hadReasoning) {
         frames.push(sseFrame({

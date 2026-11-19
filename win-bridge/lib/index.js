@@ -753,12 +753,12 @@ export function apply(ctx, config) {
             connection: 'keep-alive',
             'x-dsh-bridge-protocol': String(PROTOCOL_VERSION),
           });
-          /** @type {{roleSent: boolean, pendingUsage: object | undefined, finished: boolean, namedToolIds: Set<string>, reasoningBuffer: string, hasText: boolean}} */
+          /** @type {{roleSent: boolean, pendingUsage: object | undefined, finished: boolean, namedToolIds: Set<string>, reasoningBuffer: string, hasText: boolean, hasToolCall: boolean}} */
           const state = {
             roleSent: false, pendingUsage: undefined, finished: false,
-            namedToolIds: new Set(), reasoningBuffer: '', hasText: false,
+            namedToolIds: new Set(), reasoningBuffer: '', hasText: false, hasToolCall: false,
           };
-          // 所有帧共享同一个 ctx 对象：reasoningBuffer / namedToolIds / hasText
+          // 所有帧共享同一个 ctx 对象：reasoningBuffer / namedToolIds / hasText / hasToolCall
           // 必须跨帧累积，否则思考兜底与 tool name 去重都会失效。
           const sseCtx = {
             id, model: modelName,
@@ -771,6 +771,8 @@ export function apply(ctx, config) {
             set reasoningBuffer(v) { state.reasoningBuffer = v; },
             get hasText() { return state.hasText; },
             set hasText(v) { state.hasText = v; },
+            get hasToolCall() { return state.hasToolCall; },
+            set hasToolCall(v) { state.hasToolCall = v; },
           };
           try {
             for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
@@ -829,8 +831,9 @@ export function apply(ctx, config) {
           }
           lastLlmChunks = { model: modelName, chunks: chunkCounts, finishReason: firstFinishReason, contentLen: content.length, reasoningLen: reasoning.length };
           // 若整轮只有思考没有正文：绝不用思考冒充正文（那是英文推理泄漏）。
-          // 只在完全没输出时给一句明确提示，与流式路径一致。
-          if (content === '' && reasoning !== '') {
+          // 有工具调用的轮次不插提示 —— 那是 agent 循环的中间轮，
+          // 工具结果会驱动下一轮继续出正文。
+          if (content === '' && reasoning !== '' && toolCalls.length === 0) {
             content = '（模型只输出了思考过程，没有生成正文。可尝试重新发送或更换模型。）';
           }
           const message = { role: 'assistant', content };

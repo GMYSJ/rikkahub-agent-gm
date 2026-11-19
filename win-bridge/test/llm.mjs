@@ -107,6 +107,17 @@ test('reasoning-delta 只走 reasoning_content，不刷屏正文', () => {
   assert.equal(d.reasoning_content, '思考文本');
   assert.equal(d.content, undefined, '思考分片绝不能当正文发，否则会刷屏切碎对话');
 });
+test('【回归】有工具调用的轮次不插"只输出了思考"提示', () => {
+  const ctx = {
+    id: 'x', model: 'm', roleSent: true, reasoningBuffer: '', hasText: false,
+    hasToolCall: false, namedToolIds: new Set(),
+  };
+  chunkToSse({ type: 'reasoning-delta', index: 0, text: 'thinking...' }, ctx);
+  chunkToSse({ type: 'tool-call-delta', index: 0, id: 'c1', name: 'get_battery_status', argumentsDelta: '{}' }, ctx);
+  const r = chunkToSse({ type: 'finish', reason: 'tool_calls' }, ctx);
+  const contents = r.frames.map((f) => parseFrame(f).choices[0].delta.content).filter(Boolean);
+  assert.equal(contents.length, 0, '工具轮绝不能插提示语');
+});
 test('【回归】全 reasoning 无正文时绝不把思考当正文输出', () => {
   const ctx = { id: 'x', model: 'm', roleSent: true, reasoningBuffer: '', hasText: false };
   chunkToSse({ type: 'reasoning-delta', index: 0, text: 'We need answer to the user request' }, ctx);
