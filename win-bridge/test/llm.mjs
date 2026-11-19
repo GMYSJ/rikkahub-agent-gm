@@ -106,15 +106,15 @@ test('reasoning-delta 只走 reasoning_content，不刷屏正文', () => {
   assert.equal(d.reasoning_content, '思考文本');
   assert.equal(d.content, undefined, '思考分片绝不能当正文发，否则会刷屏切碎对话');
 });
-test('全 reasoning 无正文时 finish 一次性兜底 content', () => {
+test('【回归】全 reasoning 无正文时绝不把思考当正文输出', () => {
   const ctx = { id: 'x', model: 'm', roleSent: true, reasoningBuffer: '', hasText: false };
-  chunkToSse({ type: 'reasoning-delta', index: 0, text: '第一段' }, ctx);
-  chunkToSse({ type: 'reasoning-delta', index: 1, text: '第二段' }, ctx);
+  chunkToSse({ type: 'reasoning-delta', index: 0, text: 'We need answer to the user request' }, ctx);
+  chunkToSse({ type: 'reasoning-delta', index: 1, text: ' and then produce output' }, ctx);
   const r = chunkToSse({ type: 'finish', reason: 'stop' }, ctx);
-  // finish 应产生：兜底 content 帧 + finish 帧
   const contents = r.frames.map((f) => parseFrame(f).choices[0].delta.content).filter(Boolean);
-  assert.equal(contents.length, 1, '兜底内容必须一次性发，不能多帧');
-  assert.equal(contents[0], '第一段第二段');
+  assert.equal(contents.length, 1);
+  assert.equal(contents[0].includes('We need answer'), false, '绝不能把英文思考倒进正文');
+  assert.match(contents[0], /只输出了思考过程/, '应给明确中文提示');
 });
 test('没有 block-start 时 text-delta 自动补 role', () => {
   const r = chunkToSse({ type: 'text-delta', index: 0, text: 'hi' }, {

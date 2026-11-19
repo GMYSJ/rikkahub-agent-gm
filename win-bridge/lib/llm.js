@@ -206,11 +206,20 @@ export function chunkToSse(chunk, ctx) {
     // 模型调用失败如 429 限流也包成 finish 帧）。必须把错误显示出来，
     // 否则用户只看到空回复，完全不知道是限流/密钥失效。
     const errText = extractFinishError(chunk.reason);
-    // 若整轮没有任何正文（text-delta），但累积了 reasoning，
-    // 才把它一次性作为 content 发出去——避免空回复，又不刷屏。
-    const buffered = ctx.reasoningBuffer || '';
-    if (!ctx.hasText && buffered !== '') {
-      frames.push(sseFrame({ id: ctx.id, model: ctx.model, delta: { content: buffered } }));
+    // 若整轮只有思考（reasoning）而完全没有正文：
+    // **绝不把思考当正文发出去**——那正是用户看到的「突然爆一大堆英文」，
+    // 因为模型的内部推理是英文的。思考内容已通过 reasoning_content 分片
+    // 发出，客户端（RikkaHub）有自己的思考区可展示。
+    // 这里只在「什么都没输出」时给一句明确提示，避免用户面对空白。
+    if (!ctx.hasText && errText === null) {
+      const hadReasoning = (ctx.reasoningBuffer || '') !== '';
+      if (hadReasoning) {
+        frames.push(sseFrame({
+          id: ctx.id,
+          model: ctx.model,
+          delta: { content: '（模型只输出了思考过程，没有生成正文。可尝试重新发送或更换模型。）' },
+        }));
+      }
       ctx.reasoningBuffer = '';
     }
     if (errText !== null) {

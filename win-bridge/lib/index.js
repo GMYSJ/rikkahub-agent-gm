@@ -826,8 +826,11 @@ export function apply(ctx, config) {
             }
           }
           lastLlmChunks = { model: modelName, chunks: chunkCounts, finishReason: firstFinishReason, contentLen: content.length, reasoningLen: reasoning.length };
-          // 若整轮没有正文但有思考，一次性兜底（与流式路径一致）
-          if (content === '' && reasoning !== '') content = reasoning;
+          // 若整轮只有思考没有正文：绝不用思考冒充正文（那是英文推理泄漏）。
+          // 只在完全没输出时给一句明确提示，与流式路径一致。
+          if (content === '' && reasoning !== '') {
+            content = '（模型只输出了思考过程，没有生成正文。可尝试重新发送或更换模型。）';
+          }
           const message = { role: 'assistant', content };
           if (toolCalls.length > 0) {
             message.tool_calls = toolCalls;
