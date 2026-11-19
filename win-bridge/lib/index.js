@@ -734,6 +734,8 @@ export function apply(ctx, config) {
           hasSystem: typeof converted.options.system === 'string',
           toolCount: Array.isArray(converted.options.tools) ? converted.options.tools.length : 0,
           droppedTools: converted.droppedTools ?? 0,
+          maxTokens: converted.options.maxTokens,
+          adjustedMaxTokens: converted.adjustedMaxTokens,
         };
 
         const id = newCompletionId();

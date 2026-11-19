@@ -18,6 +18,7 @@ import {
   truncateContentBlocks,
   MAX_TOOL_RESULT_CHARS,
   MAX_FORWARDED_TOOLS,
+  MIN_MAX_TOKENS,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -242,7 +243,9 @@ test('合法请求转换成功', () => {
   // content 必须是 ContentBlock[]，不能是裸字符串
   assert.deepEqual(r.options.messages[0].content, [{ type: 'text', text: '你好' }]);
   assert.equal(r.options.temperature, 0.7);
-  assert.equal(r.options.maxTokens, 100);
+  // max_tokens=100 低于安全下限，会被抬到 MIN_MAX_TOKENS
+  assert.equal(r.options.maxTokens, MIN_MAX_TOKENS);
+  assert.equal(r.adjustedMaxTokens, 100);
 });
 test('system 消息转到 GenerateOptions.system，不构造 system 消息', () => {
   const r = openAiRequestToGenerateOptions({
@@ -387,6 +390,19 @@ test('【回归】超长工具结果被截断（防上下文爆炸致模型退�
   assert.ok(text.length < huge.length, '必须截断');
   assert.ok(text.length <= MAX_TOOL_RESULT_CHARS + 100, '截断后接近上限');
   assert.match(text, /已截断/, '必须标注截断');
+});
+test('【回归】max_tokens 过小时抬到安全下限（防推理吃光预算导致空回复）', () => {
+  const small = openAiRequestToGenerateOptions({
+    model: 'm', messages: [{ role: 'user', content: 'x' }], max_tokens: 50,
+  });
+  assert.equal(small.options.maxTokens, MIN_MAX_TOKENS);
+  assert.equal(small.adjustedMaxTokens, 50, '应记录原始值');
+  // 足够大时不改动
+  const big = openAiRequestToGenerateOptions({
+    model: 'm', messages: [{ role: 'user', content: 'x' }], max_tokens: 8192,
+  });
+  assert.equal(big.options.maxTokens, 8192);
+  assert.equal(big.adjustedMaxTokens, null);
 });
 test('truncateContentBlocks 不动短文本与非文本块', () => {
   const blocks = [

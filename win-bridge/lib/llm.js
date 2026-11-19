@@ -42,6 +42,15 @@ export const MAX_FORWARDED_TOOLS = 120;
  */
 export const MAX_TOOL_RESULT_CHARS = 4_000;
 
+/**
+ * max_tokens 安全下限。
+ *
+ * 推理模型会先用 token 做思考，客户端给的值太小（如 50）时思考把预算吃光，
+ * 正文一个字都出不来 → 手机端表现为「连上了但模型不回复」。
+ * 2048 给思考留足空间，且远低于各模型上限，不会触发「超限」错误。
+ */
+export const MIN_MAX_TOKENS = 2_048;
+
 /** 单条历史 assistant 消息允许的最大字符数（比工具结果宽松，保留上下文语义）。 */
 export const MAX_ASSISTANT_CHARS = 8_000;
 
@@ -319,6 +328,9 @@ export function openAiRequestToGenerateOptions(body) {
     return { ok: false, reason: '`messages` must be a non-empty array' };
   }
 
+  /** 客户端原始 max_tokens（若非空且被抬升，用于诊断）。 */
+  let adjustedMaxTokens = null;
+
   // provider/model 拆分提前：assistant 消息的 source 需要 provider。
   const slash = model.indexOf('/');
   const providerName = slash > 0 && slash < model.length - 1 ? model.slice(0, slash) : model;
@@ -417,7 +429,17 @@ export function openAiRequestToGenerateOptions(body) {
   const options = { model: modelName, messages, provider: providerName };
   if (systemParts.length > 0) options.system = systemParts.join('\n');
   if (typeof raw.temperature === 'number') options.temperature = raw.temperature;
-  if (typeof raw.max_tokens === 'number') options.maxTokens = raw.max_tokens;
+  // max_tokens 下限保护：推理模型（workbuddy 等）会先用 token 做思考，
+  // 客户端给的值太小时思考就吃光预算，正文一个字都出不来
+  // （实测：max_tokens=50 且 finishReason=max-tokens 时 contentLen=0，
+  //  手机端表现为「连上了但模型不回复」）。
+  // 抬到安全下限，保证思考之后仍有正文预算。
+  if (typeof raw.max_tokens === 'number') {
+    options.maxTokens = Math.max(raw.max_tokens, MIN_MAX_TOKENS);
+    if (options.maxTokens !== raw.max_tokens) {
+      adjustedMaxTokens = raw.max_tokens;
+    }
+  }
   let droppedTools = 0;
   if (Array.isArray(raw.tools) && raw.tools.length > 0) {
     /** @type {Array<object>} */
@@ -450,5 +472,5 @@ export function openAiRequestToGenerateOptions(body) {
     }
   }
 
-  return { ok: true, options, droppedTools };
+  return { ok: true, options, droppedTools, adjustedMaxTokens };
 }
