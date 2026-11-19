@@ -306,6 +306,9 @@ export function apply(ctx, config) {
   /** 最近一次模型调用的 chunk 统计（排障：看 DSH 到底吐了什么）。 */
   let lastLlmChunks = null;
 
+  /** 最近一次模型请求的结构元数据（只记角色/长度/工具数，不记正文）。 */
+  let lastLlmRequest = null;
+
   /**
    * 调用审计：最近 N 次工具调用的记录。
    *
@@ -720,6 +723,17 @@ export function apply(ctx, config) {
           sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, converted.reason));
           return;
         }
+        // 记录请求结构（不含正文）：便于对比"测试 OK"与"真机 400"的差异。
+        lastLlmRequest = {
+          at: new Date().toISOString(),
+          model: converted.options.model,
+          provider: converted.options.provider,
+          roles: (converted.options.messages ?? []).map((m) => m.role),
+          contentLengths: (converted.options.messages ?? []).map((m) =>
+            Array.isArray(m.content) ? m.content.map((b) => (typeof b.text === 'string' ? b.text.length : 0)) : 0),
+          hasSystem: typeof converted.options.system === 'string',
+          toolCount: Array.isArray(converted.options.tools) ? converted.options.tools.length : 0,
+        };
 
         const id = newCompletionId();
         const modelName = converted.options.model;
@@ -912,6 +926,7 @@ export function apply(ctx, config) {
           recent: recentCalls.slice(-20).reverse(),
           lan: lanListeners.map((listener) => listener.address),
           lastLlmChunks,
+          lastLlmRequest,
         }));
         return;
       }
