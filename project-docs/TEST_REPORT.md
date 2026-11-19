@@ -70,6 +70,31 @@
 
 其余回归项全部正常：`im-qqbot` 的 `appId`/`appSecret` 仍在，其余插件完好。
 
+## 工具名重复拼接故障（2026-11-19，已修复）
+
+**用户报告**：用 workbuddy 模型时工具名被重复拼接：
+`workspace_read_folderworkspace_read_folder`、`list_fileslist_fileslist_files`…
+导致 `tool_not_found`。但 `get_time_info` 成功（无参数工具）。
+
+**根因**（读 DSH 源码确认）：
+- `dsh-llm-deepseek/src/translate.ts:137`：deepseek 适配器**只在首帧**带 `name`
+- `dsh-llm-pi-ai/src/stream.ts:196-205`：pi-ai（workbuddy 用）**每个分片都带 `name`**
+- 我的桥原先每个 tool-call-delta 都输出 `function.name`，
+  RikkaHub 的 OpenAI 流式解析器**累加每段 delta 的 name** → 重复拼接
+- 重复次数 = 该工具 arguments 被切成几个 delta 分片（参数越多重复越多，无参数的 get_time_info 只 1 次所以正常）
+
+**修复**（提交 `03f60ae`）：
+- `chunkToSse` 用 `namedToolIds` Set 跟踪，同一 tool id 的 name 只发首帧
+- 流式 ctx 改为跨帧共享对象（getter/setter），让 `namedToolIds`/`reasoningBuffer`/`hasText` 真正跨帧累积
+  ——**附带修复**：之前每帧新建 ctx，导致思考内容兜底也一直没生效
+
+**验证**：
+- 单测 190→191（含"每帧都带 name 只发一次"回归用例）
+- 真实 SSE 抓帧：`name=get_time_info` 只出现 1 次，第二帧只有 arguments ✅
+- workbuddy 限流中（22:12 恢复），恢复后需真机复测该模型
+
+---
+
 ### 真机验证结果（用户实测，2026-11-19）
 
 手机 RikkaHub（192.168.1.4）经 MCP 接入 `192.168.1.3:61420`。
