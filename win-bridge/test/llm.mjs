@@ -350,6 +350,33 @@ test('非 body 被拒', () => {
   assert.equal(openAiRequestToGenerateOptions(null).ok, false);
   assert.equal(openAiRequestToGenerateOptions([]).ok, false);
 });
+test('【回归】工具超限时截断，且优先保留 mcp__ 电脑工具', () => {
+  const tools = [];
+  for (let i = 0; i < 150; i++) {
+    tools.push({ type: 'function', function: { name: `local_${i}`, parameters: {} } });
+  }
+  for (let i = 0; i < 28; i++) {
+    tools.push({ type: 'function', function: { name: `mcp__dsh__t${i}`, parameters: {} } });
+  }
+  const r = openAiRequestToGenerateOptions({
+    model: 'workbuddy/deepseek-v4.1-flash',
+    messages: [{ role: 'user', content: 'hi' }],
+    tools,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.options.tools.length, 40, '不得超过上限');
+  assert.equal(r.droppedTools, 138);
+  const names = r.options.tools.map((t) => t.name);
+  assert.equal(names.filter((n) => n.startsWith('mcp__')).length, 28, '电脑工具必须全保留');
+});
+test('工具未超限时不截断', () => {
+  const tools = [{ type: 'function', function: { name: 'a', parameters: {} } }];
+  const r = openAiRequestToGenerateOptions({
+    model: 'm', messages: [{ role: 'user', content: 'x' }], tools,
+  });
+  assert.equal(r.options.tools.length, 1);
+  assert.equal(r.droppedTools, 0);
+});
 
 console.log(`\n结果：${passed} 通过，${failed} 失败\n`);
 if (failed > 0) process.exitCode = 1;

@@ -24,6 +24,16 @@
 export const CHUNK_ID_PREFIX = 'dshbridge';
 
 /**
+ * 单次转发给模型的工具上限。
+ *
+ * 手机侧会把本地全部工具 + 桥的工具一起发来（实测 174 个），
+ * 远超多数模型的处理能力：实测 workbuddy 在 174 个工具时指令跟随崩溃
+ * （中文变英文、陷入工具循环），0 工具时正常。
+ * 40 是一个保守上限：足够覆盖电脑侧 28 个工具 + 少量手机工具。
+ */
+export const MAX_FORWARDED_TOOLS = 40;
+
+/**
  * 生成响应 id。
  *
  * @returns {string}
@@ -360,6 +370,7 @@ export function openAiRequestToGenerateOptions(body) {
   if (systemParts.length > 0) options.system = systemParts.join('\n');
   if (typeof raw.temperature === 'number') options.temperature = raw.temperature;
   if (typeof raw.max_tokens === 'number') options.maxTokens = raw.max_tokens;
+  let droppedTools = 0;
   if (Array.isArray(raw.tools) && raw.tools.length > 0) {
     /** @type {Array<object>} */
     const tools = [];
@@ -372,8 +383,24 @@ export function openAiRequestToGenerateOptions(body) {
         parameters: fn.parameters !== undefined && fn.parameters !== null ? fn.parameters : {},
       });
     }
-    if (tools.length > 0) options.tools = tools;
+    // 工具数量上限：手机侧会把「本地全部工具 + 桥的 28 个」一起发来（实测 174 个）。
+    // 一次性塞给模型会压垮其指令跟随能力（实测：0 工具时中文正常，
+    // 174 工具时退化成英文、自说自话并陷入工具循环）。
+    // 策略：优先保留桥的工具（mcp__ 前缀＝电脑能力），其余按原顺序截断。
+    const limit = MAX_FORWARDED_TOOLS;
+    if (tools.length > limit) {
+      const bridgeTools = tools.filter((t) => t.name.startsWith('mcp__'));
+      const others = tools.filter((t) => !t.name.startsWith('mcp__'));
+      const roomForOthers = Math.max(0, limit - bridgeTools.length);
+      const kept = bridgeTools.length <= limit
+        ? [...bridgeTools, ...others.slice(0, roomForOthers)]
+        : bridgeTools.slice(0, limit);
+      droppedTools = tools.length - kept.length;
+      options.tools = kept;
+    } else if (tools.length > 0) {
+      options.tools = tools;
+    }
   }
 
-  return { ok: true, options };
+  return { ok: true, options, droppedTools };
 }

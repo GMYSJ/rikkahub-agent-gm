@@ -733,6 +733,7 @@ export function apply(ctx, config) {
             Array.isArray(m.content) ? m.content.map((b) => (typeof b.text === 'string' ? b.text.length : 0)) : 0),
           hasSystem: typeof converted.options.system === 'string',
           toolCount: Array.isArray(converted.options.tools) ? converted.options.tools.length : 0,
+          droppedTools: converted.droppedTools ?? 0,
         };
 
         const id = newCompletionId();
