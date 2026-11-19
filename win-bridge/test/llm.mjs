@@ -303,6 +303,29 @@ test('tool 消息转成 DSH ToolResultMessage 结构', () => {
   assert.equal(t.toolCallId, 'call_1');
   assert.equal(t.source.callId, 'call_1');
 });
+test('【回归】assistant 的 text 与 tool_calls 合并到同一条消息（防配对损坏）', () => {
+  const r = openAiRequestToGenerateOptions({
+    model: 'workbuddy/deepseek-v4.1-flash',
+    messages: [{
+      role: 'assistant',
+      content: '我来做自检',
+      tool_calls: [
+        { id: 'c1', function: { name: 'tool_a', arguments: '{}' } },
+        { id: 'c2', function: { name: 'tool_b', arguments: '{"x":1}' } },
+      ],
+    }],
+  });
+  assert.equal(r.ok, true);
+  const assistants = r.options.messages.filter((m) => m.role === 'assistant');
+  assert.equal(assistants.length, 1, '必须只有一条 assistant，不能拆成多条空壳');
+  const blocks = assistants[0].content;
+  assert.equal(blocks.length, 3, '1 个 text + 2 个 tool-call');
+  assert.equal(blocks[0].type, 'text');
+  assert.equal(blocks[1].type, 'tool-call');
+  assert.equal(blocks[1].id, 'c1', '字段必须是 id，不是 callId');
+  assert.equal(blocks[1].name, 'tool_a');
+  assert.equal(blocks[2].id, 'c2');
+});
 test('非字符串 content 降级成文本块而不丢消息', () => {
   const r = openAiRequestToGenerateOptions({
     model: 'm', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],

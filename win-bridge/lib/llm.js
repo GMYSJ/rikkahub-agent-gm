@@ -315,31 +315,31 @@ export function openAiRequestToGenerateOptions(body) {
     } else if (role === 'assistant') {
       // AssistantMessage = { id, role:'assistant', content, source }（dsh-llm/src/message.ts:167-170）
       // source = { kind:'model', provider, model }（同文件 :24-26）
+      //
+      // 关键：text 与 tool_calls 必须放在**同一条** assistant 消息的 content 数组里！
+      // 之前把每个 tool_call 拆成独立 assistant 消息，导致上游看到一堆空壳
+      // assistant + 断裂的调用记录 → "工具调用记录对不上，内容已损坏"(code 11148)。
+      // ToolCallBlock = {type:'tool-call', id, name, arguments}（dsh-llm/src/types.ts:112-119），
+      // 字段是 `id`（不是 callId）。
       const providerKey = typeof providerName === 'string' ? providerName : model;
-      messages.push({
-        id: msgId,
-        role: 'assistant',
-        content: contentBlocks,
-        source: { kind: 'model', provider: providerKey, model: modelName },
-      });
-      // 若客户端带 tool_calls，转成 DSH 的 tool-call 内容块，
-      // 保证多轮工具调用链完整（主提示词明确要求）。
+      const assistantContent = [...contentBlocks];
       if (Array.isArray(m.tool_calls)) {
         for (const tc of m.tool_calls) {
           const fn = tc?.function ?? {};
-          messages.push({
-            id: `${msgId}-call-${String(tc?.id ?? '')}`,
-            role: 'assistant',
-            content: [{
-              type: 'tool-call',
-              callId: String(tc?.id ?? ''),
-              name: String(fn.name ?? ''),
-              arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
-            }],
-            source: { kind: 'model', provider: providerKey, model: modelName },
+          assistantContent.push({
+            type: 'tool-call',
+            id: String(tc?.id ?? ''),
+            name: String(fn.name ?? ''),
+            arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
           });
         }
       }
+      messages.push({
+        id: msgId,
+        role: 'assistant',
+        content: assistantContent,
+        source: { kind: 'model', provider: providerKey, model: modelName },
+      });
     } else if (role === 'tool') {
       // ToolResultMessage = { id, role:'tool', content, source:{kind:'tool',callId}, toolCallId, isError? }
       // （dsh-llm/src/message.ts:173-180, 29-32）
