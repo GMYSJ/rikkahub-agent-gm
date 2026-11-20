@@ -310,6 +310,9 @@ export function apply(ctx, config) {
   /** 最近一次模型请求的结构元数据（只记角色/长度/工具数，不记正文）。 */
   let lastLlmRequest = null;
 
+  /** 最近一次模型调用抛出的错误（流式 catch 路径，排障关键）。 */
+  let lastLlmError = null;
+
   /**
    * 调用审计：最近 N 次工具调用的记录。
    *
@@ -744,8 +747,14 @@ export function apply(ctx, config) {
         const wantsStream = parsed.stream !== false; // OpenAI 缺省是流式；显式 stream:false 才关闭
 
         // 客户端断开时中止模型调用。
+        // 注意：Node 的 'close' 在响应**正常结束**后也会触发，
+        // 所以用 res.writableEnded 区分"客户端提前断开"与"已正常写完"：
+        // 已写完就没必要（也不应该）再 abort，否则可能在流收尾阶段
+        // 抛 AbortError，让客户端看到 truncated 的响应。
         const controller = new AbortController();
-        res.on('close', () => controller.abort());
+        res.on('close', () => {
+          if (!res.writableEnded) controller.abort();
+        });
 
         if (wantsStream) {
           res.writeHead(200, {
@@ -790,8 +799,19 @@ export function apply(ctx, config) {
           } catch (err) {
             // 流中途出错：不能只写 [DONE]，客户端需要知道出错了。
             const raw = err instanceof Error ? err.message : String(err);
-            res.write(sseFrameForError(id, modelName, friendlyLlmError(raw)));
-            res.write(SSE_DONE);
+            const friendly = friendlyLlmError(raw);
+            // 记录到诊断：这类"连接被中断"在客户端只表现为
+            // "unexpected end of stream"，没有这层记录就无从排查。
+            lastLlmError = { at: new Date().toISOString(), model: modelName, raw, friendly };
+            try {
+              res.write(sseFrameForError(id, modelName, friendly));
+              res.write(SSE_DONE);
+              // 确保错误帧立刻发出：客户端在错误帧之前收到 EOF
+              // 就会报 "unexpected end of stream"。
+              if (typeof res.flush === 'function') res.flush();
+            } catch (_writeFailed) {
+              // 客户端可能已断开，忽略
+            }
           } finally {
             res.end();
           }
@@ -937,6 +957,7 @@ export function apply(ctx, config) {
           lan: lanListeners.map((listener) => listener.address),
           lastLlmChunks,
           lastLlmRequest,
+          lastLlmError,
         }));
         return;
       }
