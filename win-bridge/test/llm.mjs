@@ -430,7 +430,7 @@ test('【回归】max_tokens 过小时抬到安全下限（防推理吃光预算
   assert.equal(big.options.maxTokens, 8192);
   assert.equal(big.adjustedMaxTokens, null);
 });
-test('【回归】image_url 块降级成文字占位（防请求体膨胀 + DSH 不认该类型）', () => {
+test('【回归】未经预处理的 image_url 保留给预处理阶段（不再由转换器降级）', () => {
   const bigB64 = 'A'.repeat(2_000_000);
   const r = openAiRequestToGenerateOptions({
     model: 'm',
@@ -446,9 +446,9 @@ test('【回归】image_url 块降级成文字占位（防请求体膨胀 + DSH 
   const blocks = r.options.messages[0].content;
   assert.equal(blocks.length, 2);
   assert.equal(blocks[0].type, 'text');
-  assert.equal(blocks[1].type, 'text', 'image_url 必须转成 text，不能透传');
-  assert.match(blocks[1].text, /图片/);
-  assert.ok(blocks[1].text.length < 200, '占位文本必须短，不能带上 base64');
+  // 转换器本身不碰 image_url：由 preprocessingImages() 在它之前完成上传/降级。
+  // 若这里再降级一次，已上传的 {type:'image'} 会被二次处理成占位文字。
+  assert.equal(blocks[1].type, 'image_url');
 });
 test('degradeImageBlocks 不动普通文本块', () => {
   const out = degradeImageBlocks([{ type: 'text', text: 'hello' }]);
@@ -483,8 +483,8 @@ test('preprocessingImages 有附件服务时转成 ImageBlock', async () => {
       return [fakeRef];
     },
   };
-  const saved = await preprocessingImages(body, attachments);
-  assert.equal(saved, 1);
+  const prep = await preprocessingImages(body, attachments);
+  assert.equal(prep.saved, 1);
   const blocks = body.messages[0].content;
   assert.equal(blocks[1].type, 'image', '应转成 DSH ImageBlock');
   assert.equal(blocks[1].attachment, fakeRef);
@@ -497,10 +497,20 @@ test('preprocessingImages 无附件服务时降级为文字', async () => {
       content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } }],
     }],
   };
-  const saved = await preprocessingImages(body, undefined);
-  assert.equal(saved, 0);
+  const prep = await preprocessingImages(body, undefined);
+  assert.equal(prep.saved, 0);
   assert.equal(body.messages[0].content[0].type, 'text');
   assert.match(body.messages[0].content[0].text, /图片/);
+});
+test('【回归】已转换的 image 块绝不能被再次降级', () => {
+  const ref = { attachmentId: 'att_x', mediaType: 'image/png', bytes: 100, width: 1, height: 1 };
+  const blocks = [
+    { type: 'text', text: '看图' },
+    { type: 'image', attachment: ref },
+  ];
+  const out = degradeImageBlocks(blocks);
+  assert.equal(out[1].type, 'image', 'image 块必须原样保留，否则模型只能看到占位文字');
+  assert.equal(out[1].attachment, ref);
 });
 test('truncateContentBlocks 不动短文本与非文本块', () => {
   const blocks = [

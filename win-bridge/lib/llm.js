@@ -524,7 +524,11 @@ export async function verifyImageRef(attachments, ref) {
 }
 
 /**
- * 同步版降级：仅用于没有附件服务的场景。
+ * 同步版降级：把**未处理的** OpenAI `image_url` 块换成文字占位。
+ *
+ * 只处理 `image_url`。已经转换好的 `{type:'image', attachment}` 必须原样保留 ——
+ * 那是 preprocessingImages() 成功上传后的成果，再降级就等于把图片扔掉
+ * （这曾导致「图片存成功了，模型却只看到空占位」的假象）。
  *
  * @param {Array<object>} blocks - 原始内容块数组。
  * @returns {Array<object>} 降级后的内容块数组。
@@ -534,8 +538,8 @@ export function degradeImageBlocks(blocks) {
   return blocks.map((b) => {
     if (b === null || typeof b !== 'object') return b;
     const type = String(b.type ?? '');
-    if (type !== 'image_url' && type !== 'image') return b;
-    const url = type === 'image_url' ? (b.image_url?.url ?? b.image_url ?? '') : '';
+    if (type !== 'image_url') return b;
+    const url = b.image_url?.url ?? b.image_url ?? '';
     const sizeHint = typeof url === 'string' && url.startsWith('data:')
       ? `base64 约 ${Math.round(url.length / 1024)} KB`
       : (typeof url === 'string' && url !== '' ? '远程图片' : '未知');
@@ -592,9 +596,12 @@ export function openAiRequestToGenerateOptions(body) {
     if (typeof rawContent === 'string') {
       contentBlocks = [{ type: 'text', text: rawContent }];
     } else if (Array.isArray(rawContent)) {
-      // 数组可能混有 image_url 块：DSH 不认这个类型（它的 ImageBlock 需要
-      // attachment 引用），而且 base64 图片会把请求体撑爆。统一降级成文字。
-      contentBlocks = degradeImageBlocks(rawContent);
+      // 图片已由 preprocessingImages() 在调用本函数**之前**处理完：
+      // image_url 已换成 {type:'image', attachment} 或文字占位。
+      // 这里**绝不能**再调 degradeImageBlocks —— 它会把已经正确的
+      // image 块按类型 again 降级成"图片：未知"文字，导致
+      // 「图片明明存成功了，模型却只看到占位文字」。
+      contentBlocks = rawContent;
     } else {
       contentBlocks = [{ type: 'text', text: JSON.stringify(rawContent ?? '') }];
     }
