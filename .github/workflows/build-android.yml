@@ -73,6 +73,26 @@ jobs:
           printf 'storeFile=%s/release.keystore\nstorePassword=android\nkeyAlias=rikkahub\nkeyPassword=android\n' "$GITHUB_WORKSPACE" > local.properties
           cat local.properties
 
+      # 先跑单元测试再打包：此前 workflow 只跑 assembleRelease，
+      # 277 个单测（app 219 / ai 58）从未在 CI 上执行过，等于没有回归网。
+      #
+      # 首轮故意 continue-on-error（取基线）：
+      # 这些测试从未跑过，大概率有既有失败，直接阻断会让 APK 产不出来。
+      # 先拿到基线报告，修到全绿后把 continue-on-error 去掉改成硬门禁。
+      - name: Run unit tests (app + ai) - baseline, non-blocking
+        continue-on-error: true
+        run: ./gradlew :ai:testDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports-run${{ github.run_number }}
+          path: |
+            app/build/reports/tests/
+            ai/build/reports/tests/
+          if-no-files-found: ignore
+
       - name: Build Release APK (arm64-v8a only, R8 optimized)
         run: ./gradlew :app:assembleRelease --no-daemon
 
