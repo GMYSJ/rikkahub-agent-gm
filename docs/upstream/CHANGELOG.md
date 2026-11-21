@@ -64,3 +64,44 @@
 - 建立 `integration/upstream-202611` 集成分支
 - 产出 5 份上游文档
 - **未修改任何业务逻辑代码**
+---
+
+## 本轮（2026-11-22）验证结果
+
+**CI run #40 — 成功**
+
+| 项 | 值 |
+|---|---|
+| Run | [#40](https://github.com/GMYSJ/rikkahub-agent-gm/actions/runs/44943431686) |
+| 分支 / Commit | `integration/upstream-202611` / `8b4bee0` |
+| 结果 | `success` / `BUILD SUCCESSFUL in 13m 25s` |
+| 产物 | `RikkaHub-run40-arm64`，50.2 MB（解压 APK 55.7 MB） |
+| versionName / Code | `2.5.1-agent.4` / 190（未改版本号） |
+| applicationId | `excp.rikkahub`（未改） |
+| 构建任务 | `:app:assembleRelease`（arm64-v8a，R8） |
+
+### 失败的第一次尝试（已修复，记录备查）
+
+**CI run #39 — 失败**
+
+- 失败步骤：`Build Release APK`
+- 报错：`McpToolSchema.kt:1:1 Syntax error: Expecting a top level declaration`（连锁
+  `Unresolved reference 'toSchema'` ×2）
+- 根因：本机 PowerShell 5.1 的 `>` 重定向把两个新文件写成 UTF-16LE（`FF FE` BOM）
+- 修复：`8b4bee0` 用原始字节重写，`McpToolSchema.kt` blob 与官方 **逐字节相同**
+- 详见 `CONFLICTS.md` C-12
+
+### ⚠️ 测试状态如实说明
+
+| 验证项 | 状态 | 说明 |
+|---|---|---|
+| Release 编译（含 R8） | **通过** | run #40 |
+| `McpToolSchemaTest`（6 例） | **未测试** | 现有 CI 只跑 `assembleRelease`，**不执行单元测试** |
+| `ChatCompletionsStreamDecoderNullTest` | **未测试** | 同上 |
+| Agent 工具调用链回归 | **未测试** | 本机无 ADB，需真机 |
+| 旧数据迁移 | **不适用** | 本轮未改数据库版本与数据结构 |
+| 功能行为验证 | **未测试** | 需真机安装 APK |
+
+**结论：本轮只能声明"编译通过、产物已生成"，不能声明"功能测试通过"。**
+下一步需要在 workflow 中补 `./gradlew :app:testDebugUnitTest` 或等价任务，
+才能在 CI 层面验证两个新单测。

@@ -56,10 +56,10 @@ git merge-base HEAD official/master   # 必须返回一个 SHA，而不是空
 | Upstream branch | `master` |
 | **Last synced tag** | `2.5.1` |
 | **Last synced commit** | `a9b35ba2f1b0f1b2211f78da3cc43555b332294d`（tag `2.5.1`） |
-| **Last sync date** | 2026-11-22（本轮为首次正式同步，仅完成审计） |
-| **Base repository commit** | `4a77cdba0afdc436325ffa893d69146b977da877` |
+| **Last sync date** | 2026-11-22（首轮：审计 + 6 项 P0 低风险修复移植，CI 通过） |
+| **Base repository commit** | `8b4bee0fb3118c5ba4a8d8c3930a1ad4cc35a211`（本轮末尾） |
 | **Target upstream commit** | `2435dbdf4690fe26d424b8d1ab778bcde9c6cd75`（3.3.1） |
-| **Pending features** | 332 个官方提交待评估，见 `FEATURE_MATRIX.md` |
+| **Pending features** | 332 个官方提交中已移植 6 项 P0 修复，其余待评估，见 `FEATURE_MATRIX.md` |
 | **Known conflicts** | 见 `CONFLICTS.md` |
 
 ### 版本差

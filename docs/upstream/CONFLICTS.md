@@ -153,3 +153,36 @@
 **事实**：本机无 java / gradle / adb，只有便携 git。
 **约束**：构建一律走 GitHub Actions（JDK 21，`.github/workflows/build-android.yml`）。
 不得要求用户安装 Android Studio；不得用来源不明的预编译 APK 替代源码构建。
+---
+
+## C-12 本机 PowerShell 5.1 写源码的编码陷阱（已踩，必避）
+
+**现象**：CI 报 `McpToolSchema.kt:1:1 Syntax error: Expecting a top level declaration`，
+且连带出现 `Unresolved reference` 假报错。
+
+**根因**：本机是 **Windows PowerShell 5.1**（非 Core），
+`>`、`Out-File`、`Set-Content` 默认写 **UTF-16LE**（带 `FF FE` BOM）。
+用 `git show <rev>:<path> > file` 落盘源码，文件里每个字符前会插 `\0`，
+Kotlin 解析器看到的就是乱码。
+
+**正确做法**：
+`powershell
+# 方法 A：从 git 取原始字节（推荐，保证与上游 blob 逐字节一致）
+ = New-Object System.Diagnostics.ProcessStartInfo
+.FileName = "<git.exe path>"
+.Arguments = "-C "<repo>" show <rev>:<relPath>"
+.RedirectStandardOutput = True; .UseShellExecute = False; .CreateNoWindow = True
+ = [System.Diagnostics.Process]::Start()
+ = New-Object System.IO.MemoryStream
+.StandardOutput.BaseStream.CopyTo(); .WaitForExit()
+[System.IO.File]::WriteAllBytes(, .ToArray())
+
+# 方法 B：自己构造文本时
+[System.IO.File]::WriteAllText(, , [System.Text.UTF8Encoding]::new(False))
+`
+
+**禁止**：用 `>` / `Out-File` / `Set-Content` 写任何 `.kt/.kts/.md/.yml/.gradle` 源文件。
+`Out-File -Encoding utf8NoBOM` 在本机 5.1 **不存在**（那是 pwsh 7 的参数）。
+
+**校验**：提交前跑一次 UTF-16 BOM 扫描（见 migration-log #7）。
+修复后 `McpToolSchema.kt` 的 blob 是 `4121c72`，与官方 blob 完全一致 —— 这是最硬的验证。
