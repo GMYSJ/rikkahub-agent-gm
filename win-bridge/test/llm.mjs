@@ -204,6 +204,15 @@ test('技术性错误翻译成中文说明（MALFORMED_RESPONSE 等）', () => {
   const empty = friendlyLlmError('some EMPTY_RESPONSE case');
   assert.match(empty, /没有返回任何内容/);
 });
+test('【回归】多个工具的 name 各自都能发出（空 id 不应让 key 撞车）', () => {
+  const ctx = { id: 'x', model: 'm', roleSent: true, namedToolIds: new Set() };
+  // 两个不同 index 的工具，id 都是空字符串（某些适配器会这样）
+  const a1 = chunkToSse({ type: 'tool-call-delta', index: 0, id: '', name: 'tool_a', argumentsDelta: '{' }, ctx);
+  const b1 = chunkToSse({ type: 'tool-call-delta', index: 1, id: '', name: 'tool_b', argumentsDelta: '{' }, ctx);
+  const nameOf = (fr) => parseFrame(fr).choices[0].delta.tool_calls?.[0]?.function?.name;
+  assert.equal(nameOf(a1.frames[0]), 'tool_a');
+  assert.equal(nameOf(b1.frames[0]), 'tool_b', '第二个工具的 name 也必须发出，不能被空 id 吞掉');
+});
 test('finish reason 为 error 对象时提取错误文本（429 限流等）', () => {
   const reason = {
     kind: 'error',

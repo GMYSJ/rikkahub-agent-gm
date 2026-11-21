@@ -73,6 +73,20 @@ function sseFrameForError(id, model, message) {
 }
 
 /**
+ * 判断一段错误文案是否属于「配置错误」而非「模型输出」。
+ *
+ * 这类错误发生在真正调用模型之前（模型不存在、provider 没注册），
+ * 用 200 + content 表达会让客户端误以为调用成功、用户看到一条像回复的错误。
+ *
+ * @param {string} text - 错误文案。
+ * @returns {boolean}
+ */
+function isConfigError(text) {
+  return /NO_ADAPTER|no adapter registered|unknown model|model not found|provider .* not (registered|found)/i
+    .test(String(text ?? ''));
+}
+
+/**
  * mapFinishReason 的安全包装（永不抛）。
  *
  * @param {unknown} reason - DSH finish reason。
@@ -946,6 +960,8 @@ export function apply(ctx, config) {
         let finishReason = 'stop';
         let usage;
         const toolCalls = [];
+        /** index → 正在聚合的工具调用（同一工具的分片必须合并，不能各占一条）。 */
+        const toolCallByIndex = new Map();
         /** @type {Record<string, number>} */
         const chunkCounts = {};
         let firstFinishReason = null;
@@ -957,14 +973,26 @@ export function apply(ctx, config) {
             if (chunk?.type === 'text-delta') content += chunk.text ?? '';
             else if (chunk?.type === 'reasoning-delta') reasoning += chunk.text ?? '';
             else if (chunk?.type === 'tool-call-delta') {
-              toolCalls.push({
-                id: chunk.id ?? `call_${newTraceId()}`,
-                type: 'function',
-                function: {
-                  name: chunk.name ?? '',
-                  arguments: chunk.argumentsDelta ?? '',
-                },
-              });
+              // **必须按 index/id 聚合分片**：同一个工具的参数会被切成多个
+              // tool-call-delta 依次到达（argumentsDelta 是增量）。
+              // 早期实现每个分片 push 一个新对象，导致一次工具调用被拆成
+              // 好几个残缺的 tool_calls —— 客户端拿到的参数 JSON 不完整，
+              // 表现为 "Expected ':' after property name in JSON" 之类的
+              // MALFORMED_RESPONSE，或是调用了根本没有的工具。
+              const idx = typeof chunk.index === 'number' ? chunk.index : toolCalls.length;
+              let slot = toolCallByIndex.get(idx);
+              if (slot === undefined) {
+                slot = {
+                  id: chunk.id ?? `call_${newTraceId()}`,
+                  type: 'function',
+                  function: { name: '', arguments: '' },
+                };
+                toolCallByIndex.set(idx, slot);
+                toolCalls.push(slot);
+              }
+              if (typeof chunk.id === 'string' && chunk.id !== '') slot.id = chunk.id;
+              if (typeof chunk.name === 'string' && chunk.name !== '') slot.function.name = chunk.name;
+              if (typeof chunk.argumentsDelta === 'string') slot.function.arguments += chunk.argumentsDelta;
             } else if (chunk?.type === 'usage') usage = normalizeUsage(chunk.usage);
             else if (chunk?.type === 'finish') {
               finishReason = mapFinishReasonSafe(chunk.reason);
@@ -983,6 +1011,23 @@ export function apply(ctx, config) {
           if (content === '' && reasoning === '' && toolCalls.length === 0) {
             content = '模型返回了空内容（上游只发了结束信号，没有任何正文或工具调用）。'
               + '这通常是该模型在当前对话长度/工具数量下不适用，请换一个模型或新建对话重试。';
+          }
+          // 配置类错误（模型不存在 / 没有 adapter）不该伪装成 200 成功：
+          // 客户端会把错误文案当成正常回复显示，且不会重试。
+          // 这些错误发生在真正调用模型之前，用 4xx 表达更准确。
+          if (toolCalls.length === 0 && content !== '' && isConfigError(content)) {
+            lastLlmError = {
+              at: new Date().toISOString(),
+              model: modelName,
+              raw: content,
+              name: 'ConfigError',
+              friendly: content,
+              clientAborted: controller.signal.aborted,
+              progress: null,
+            };
+            lastFailedRequest = lastLlmRequest;
+            sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, content));
+            return;
           }
           const message = { role: 'assistant', content };
           if (toolCalls.length > 0) {

@@ -196,9 +196,14 @@ export function chunkToSse(chunk, ctx) {
     // 因为对话还没结束，工具结果会驱动下一轮继续生成正文。
     ctx.hasToolCall = true;
     if (ctx.namedToolIds === undefined) ctx.namedToolIds = new Set();
-    const toolKey = String(chunk.id ?? chunk.index ?? '');
-    const shouldSendName = chunk.name !== undefined && !ctx.namedToolIds.has(toolKey);
-    if (shouldSendName) ctx.namedToolIds.add(toolKey);
+    // key 必须能区分不同工具：优先 id，其次 index。
+    // 注意不能用 `chunk.id ?? chunk.index` —— 空字符串 id 会让所有工具
+    // 共用一个 key，第二个工具的 name 就永远发不出去（工具名变空）。
+    const rawKey = (typeof chunk.id === 'string' && chunk.id !== '')
+      ? `id:${chunk.id}`
+      : `idx:${chunk.index ?? 0}`;
+    const shouldSendName = chunk.name !== undefined && !ctx.namedToolIds.has(rawKey);
+    if (shouldSendName) ctx.namedToolIds.add(rawKey);
 
     /** @type {object} */
     const toolCall = { index: chunk.index ?? 0 };
