@@ -807,6 +807,28 @@ export function apply(ctx, config) {
             if (!state.finished) {
               for (const frame of chunkToSse({ type: 'finish', reason: 'stop' }, sseCtx).frames) res.write(frame);
             }
+            // **空响应保护**：上游有时只返回 usage+finish，没有任何
+            // block-start / text-delta（实测 deepseek-v4-pro 在长会话下会这样）。
+            // 此时客户端收不到任何正文，只看到连接结束 → 报
+            // "unexpected end of stream" 并自动重试，用户完全不知道原因。
+            // 这里补一条明确的中文错误帧，让失败可见、可操作。
+            if (!sseCtx.hasText && sseCtx.hasToolCall !== true) {
+              lastLlmError = {
+                at: new Date().toISOString(),
+                model: modelName,
+                raw: 'upstream returned no content (usage+finish only)',
+                friendly: '模型返回了空内容',
+                clientAborted: controller.signal.aborted,
+                progress: lastLlmProgress,
+              };
+              res.write(sseFrameForError(
+                id,
+                modelName,
+                '模型返回了空内容（上游只发了结束信号，没有任何正文或工具调用）。'
+                + '这通常是该模型在当前对话长度/工具数量下不适用，'
+                + '请换一个模型，或新建对话重试。',
+              ));
+            }
             res.write(SSE_DONE);
           } catch (err) {
             // 流中途出错：不能只写 [DONE]，客户端需要知道出错了。
@@ -876,6 +898,11 @@ export function apply(ctx, config) {
           // 工具结果会驱动下一轮继续出正文。
           if (content === '' && reasoning !== '' && toolCalls.length === 0) {
             content = '（模型只输出了思考过程，没有生成正文。可尝试重新发送或更换模型。）';
+          }
+          // 空响应保护（与流式路径一致）：连思考都没有，说明上游真的返回空。
+          if (content === '' && reasoning === '' && toolCalls.length === 0) {
+            content = '模型返回了空内容（上游只发了结束信号，没有任何正文或工具调用）。'
+              + '这通常是该模型在当前对话长度/工具数量下不适用，请换一个模型或新建对话重试。';
           }
           const message = { role: 'assistant', content };
           if (toolCalls.length > 0) {
