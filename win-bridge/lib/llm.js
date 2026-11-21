@@ -450,24 +450,70 @@ export async function convertImageBlocks(blocks, attachments) {
  * 之后同步转换器只需原样接受这些块即可。
  *
  * @param {unknown} body - OpenAI 请求体（会被就地修改 messages）。
- * @param {{saveImages?: Function} | undefined} attachments - DSH 附件服务。
- * @returns {Promise<number>} 成功转成 ImageBlock 的图片数量。
+ * @param {{saveImages?: Function, readImageRequest?: Function} | undefined} attachments - DSH 附件服务。
+ * @returns {Promise<{saved: number, readable: number, details: string[]}>}
  */
 export async function preprocessingImages(body, attachments) {
-  if (body === null || typeof body !== 'object') return 0;
+  const result = { saved: 0, readable: 0, details: [] };
+  if (body === null || typeof body !== 'object') return result;
   const messages = /** @type {any} */ (body).messages;
-  if (!Array.isArray(messages)) return 0;
-  let saved = 0;
+  if (!Array.isArray(messages)) return result;
   for (const m of messages) {
     if (m === null || typeof m !== 'object') continue;
     if (!Array.isArray(m.content)) continue;
     const hasImage = m.content.some((b) => b !== null && typeof b === 'object' && b.type === 'image_url');
     if (!hasImage) continue;
     const converted = await convertImageBlocks(m.content, attachments);
-    saved += converted.filter((b) => b !== null && typeof b === 'object' && b.type === 'image').length;
+    const imageBlocks = converted.filter((b) => b !== null && typeof b === 'object' && b.type === 'image');
+    result.saved += imageBlocks.length;
+    // 立刻验证每个 ref 能否读回：这是「模型看得到图」的前提。
+    for (const block of imageBlocks) {
+      const check = await verifyImageRef(attachments, block.attachment);
+      if (check.readable) {
+        result.readable += 1;
+        result.details.push(`ok:${check.bytes}B`);
+      } else {
+        result.details.push(`unreadable:${check.reason ?? 'unknown'}`);
+      }
+    }
     m.content = converted;
   }
-  return saved;
+  return result;
+}
+
+/**
+ * 验证已保存的图片引用能否被读回（排障用）。
+ *
+ * `pi-ai` 适配器在发请求前会用 `attachments.readImageRequest()` 把图片
+ * 读成实际字节（dsh-llm-pi-ai/src/context.ts:112-129）。如果这步拿不到数据，
+ * 模型就只看到占位文字、看不到像素 —— 用户现象是「收到的截图是空通道」。
+ *
+ * 这里主动读一次，把结果记进诊断，区分「存进去了」和「读得回来」。
+ *
+ * @param {{readImageRequest?: Function} | undefined} attachments - 附件服务。
+ * @param {object} ref - saveImages 返回的引用。
+ * @returns {Promise<{readable: boolean, bytes?: number, reason?: string}>}
+ */
+export async function verifyImageRef(attachments, ref) {
+  if (attachments === undefined || typeof attachments.readImageRequest !== 'function') {
+    return { readable: false, reason: 'readImageRequest unavailable' };
+  }
+  try {
+    const version = await attachments.readImageRequest(
+      ref,
+      { width: 2048, height: 2048, maxBytes: 8 * 1024 * 1024 },
+    );
+    if (version === undefined || version === null) {
+      return { readable: false, reason: 'readImageRequest returned empty' };
+    }
+    const data = version.data;
+    const bytes = data !== undefined && data !== null && typeof data.length === 'number'
+      ? data.length : (data instanceof Uint8Array ? data.byteLength : 0);
+    if (bytes === 0) return { readable: false, reason: 'zero bytes' };
+    return { readable: true, bytes };
+  } catch (e) {
+    return { readable: false, reason: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /**

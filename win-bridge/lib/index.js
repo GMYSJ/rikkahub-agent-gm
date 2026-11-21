@@ -762,8 +762,11 @@ export function apply(ctx, config) {
         // 没有附件服务时自动退化成文字占位，不影响其它块。
         const attachmentsService = typeof ctx.get === 'function' ? ctx.get('attachments') : undefined;
         let savedImages = 0;
+        let imageDiagnostics = [];
         try {
-          savedImages = await preprocessingImages(parsed, attachmentsService);
+          const prep = await preprocessingImages(parsed, attachmentsService);
+          savedImages = prep.saved;
+          imageDiagnostics = prep.details;
         } catch (e) {
           lastLlmError = {
             at: new Date().toISOString(),
@@ -801,6 +804,7 @@ export function apply(ctx, config) {
           // （实测 workbuddy 会拒绝非 ASCII 工具名），排障时需要看全量。
           toolNames: (converted.options.tools ?? []).map((t) => t.name),
           savedImages,
+          imageDiagnostics,
           maxTokens: converted.options.maxTokens,
           adjustedMaxTokens: converted.adjustedMaxTokens,
         };
