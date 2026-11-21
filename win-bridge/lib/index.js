@@ -763,10 +763,12 @@ export function apply(ctx, config) {
         const attachmentsService = typeof ctx.get === 'function' ? ctx.get('attachments') : undefined;
         let savedImages = 0;
         let imageDiagnostics = [];
+        let imageRoles = [];
         try {
           const prep = await preprocessingImages(parsed, attachmentsService);
           savedImages = prep.saved;
           imageDiagnostics = prep.details;
+          imageRoles = prep.messageIds ?? [];
         } catch (e) {
           lastLlmError = {
             at: new Date().toISOString(),
@@ -805,6 +807,7 @@ export function apply(ctx, config) {
           toolNames: (converted.options.tools ?? []).map((t) => t.name),
           savedImages,
           imageDiagnostics,
+          imageRoles,
           maxTokens: converted.options.maxTokens,
           adjustedMaxTokens: converted.adjustedMaxTokens,
         };

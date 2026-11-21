@@ -454,15 +454,22 @@ export async function convertImageBlocks(blocks, attachments) {
  * @returns {Promise<{saved: number, readable: number, details: string[]}>}
  */
 export async function preprocessingImages(body, attachments) {
-  const result = { saved: 0, readable: 0, details: [] };
+  const result = { saved: 0, readable: 0, details: [], roles: [], messageIds: [] };
   if (body === null || typeof body !== 'object') return result;
   const messages = /** @type {any} */ (body).messages;
   if (!Array.isArray(messages)) return result;
-  for (const m of messages) {
+  for (const [msgIndex, m] of messages.entries()) {
     if (m === null || typeof m !== 'object') continue;
     if (!Array.isArray(m.content)) continue;
     const hasImage = m.content.some((b) => b !== null && typeof b === 'object' && b.type === 'image_url');
     if (!hasImage) continue;
+    // 记录图片出现在哪个角色：DSH 的 ImageBlock 文档写明
+    // "only user messages may carry images"
+    // （dsh-llm/src/types.ts:80-85）。
+    // 若图片落在 tool/assistant 消息里，下游极可能被丢弃，
+    // 模型就只看到"图片不可用"的文字句柄 —— 即用户说的「空通道」。
+    result.roles.push(String(m.role ?? 'unknown'));
+    result.messageIds.push(`${msgIndex}:${String(m.role ?? '')}`);
     const converted = await convertImageBlocks(m.content, attachments);
     const imageBlocks = converted.filter((b) => b !== null && typeof b === 'object' && b.type === 'image');
     result.saved += imageBlocks.length;
