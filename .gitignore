@@ -39,3 +39,6 @@ app/google-services.json
 
 # bun.lock is generated from the tracked pnpm-lock.yaml on clean checkouts
 /web-ui/bun.lock
+
+# 第三方输入法等误写入仓库目录的日志
+/debug.log
