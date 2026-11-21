@@ -317,6 +317,15 @@ export function apply(ctx, config) {
   let lastLlmProgress = null;
 
   /**
+   * 最近一次**失败**请求的结构快照。
+   *
+   * lastLlmRequest 每次请求都会覆盖，成功的请求会把失败记录冲掉
+   * （实战踩到：用户报错后我一查，看到的是紧随其后那次成功请求的数据）。
+   * 这个变量只在出错时写入，专门保留失败现场。
+   */
+  let lastFailedRequest = null;
+
+  /**
    * 调用审计：最近 N 次工具调用的记录。
    *
    * 用途有二：
@@ -747,6 +756,9 @@ export function apply(ctx, config) {
             (sum, m) => sum + (Array.isArray(m.content)
               ? m.content.reduce((s, b) => s + (typeof b.text === 'string' ? b.text.length : 0), 0)
               : 0), 0),
+          // 工具名列表：不同模型对某些工具名/描述可能不兼容
+          // （实测 workbuddy 会拒绝非 ASCII 工具名），排障时需要看全量。
+          toolNames: (converted.options.tools ?? []).map((t) => t.name),
           maxTokens: converted.options.maxTokens,
           adjustedMaxTokens: converted.adjustedMaxTokens,
         };
@@ -838,6 +850,7 @@ export function apply(ctx, config) {
                 clientAborted: controller.signal.aborted,
                 progress: lastLlmProgress,
               };
+              lastFailedRequest = lastLlmRequest;
               res.write(sseFrameForError(
                 id,
                 modelName,
@@ -862,6 +875,7 @@ export function apply(ctx, config) {
               clientAborted: controller.signal.aborted,
               progress: lastLlmProgress,
             };
+            lastFailedRequest = lastLlmRequest;
             try {
               res.write(sseFrameForError(id, modelName, friendly));
               res.write(SSE_DONE);
@@ -936,6 +950,16 @@ export function apply(ctx, config) {
           });
         } catch (err) {
           const raw = err instanceof Error ? err.message : String(err);
+          lastLlmError = {
+            at: new Date().toISOString(),
+            model: modelName,
+            raw,
+            name: err instanceof Error ? err.name : typeof err,
+            friendly: friendlyLlmError(raw),
+            clientAborted: controller.signal.aborted,
+            progress: null,
+          };
+          lastFailedRequest = lastLlmRequest;
           sendJson(res, 502, errorEnvelope(ERROR_CODE.TOOL_FAILED, friendlyLlmError(raw)));
         }
         return;
@@ -1023,6 +1047,7 @@ export function apply(ctx, config) {
           lastLlmRequest,
           lastLlmError,
           lastLlmProgress,
+          lastFailedRequest,
         }));
         return;
       }
