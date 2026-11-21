@@ -3,21 +3,22 @@ package me.rerere.rikkahub.data.datastore
 import android.content.Context
 import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.CorruptionException
 import androidx.datastore.core.IOException
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.SharedPreferencesMigration
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.pebbletemplates.pebble.PebbleEngine
-import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -25,6 +26,7 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlin.time.Duration.Companion.milliseconds
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
@@ -129,6 +131,9 @@ private val Context.settingsStore by preferencesDataStore(
         )
     }
 )
+
+// 读取失败时的最大重试次数
+private const val READ_MAX_RETRIES = 3
 
 class SettingsStore(
     context: Context,
@@ -336,13 +341,17 @@ class SettingsStore(
 
     private val dataStore = context.settingsStore
 
+    // 读取失败时绝不能回退为空配置, 否则默认值会被当成用户数据写回, 覆盖全部设置。
+    // 偶发 IO 错误重试, 仍失败则向上抛出（不写回），避免误覆盖用户设置。
+    // CorruptionException 不重试，直接抛出交由上层处理。
     val settingsFlowRaw = dataStore.data
-        .catch { exception ->
-            if (exception is IOException) {
-                emit(emptyPreferences())
-            } else {
-                throw exception
+        .retryWhen { cause, attempt ->
+            val shouldRetry = cause is IOException && cause !is CorruptionException && attempt < READ_MAX_RETRIES
+            if (shouldRetry) {
+                Log.w(TAG, "Failed to read settings, retrying (${attempt + 1}/$READ_MAX_RETRIES)", cause)
+                delay((100L shl attempt.toInt()).milliseconds)
             }
+            shouldRetry
         }.map { preferences ->
             Settings(
                 favoriteModels = preferences[FAVORITE_MODELS]?.let { raw ->
@@ -712,6 +721,16 @@ class SettingsStore(
     val settingsFlow = settingsFlowRaw
         .distinctUntilChanged()
         .toMutableStateFlow(scope, Settings.dummy())
+
+    // 只原子地修改单个 key, 不能用 update() 写回整份快照
+    suspend fun incrementLaunchCount(): Int {
+        var count = 0
+        dataStore.edit { preferences ->
+            count = (preferences[LAUNCH_COUNT] ?: 0) + 1
+            preferences[LAUNCH_COUNT] = count
+        }
+        return count
+    }
 
     suspend fun update(settings: Settings) {
         if(settings.init) {
