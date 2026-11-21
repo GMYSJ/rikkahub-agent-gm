@@ -213,3 +213,73 @@
 - **约束（写入 CONFLICTS.md）**：本机 PowerShell 5.1 写源码必须用
   `[System.IO.File]::WriteAllBytes` 或 `WriteAllText(path, text, UTF8Encoding(false))`；
   **禁止**用 `>` / `Out-File` / `Set-Content` 写任何源文件。
+---
+
+## #8 前台服务竞态修复 —— 不适用（已论证）
+
+- **日期**：2026-11-22
+- **官方**：`72747fc9e`
+- **结论**：**不移植**（主体已用不同机制解决同一问题）
+
+**官方做法**：`acquire`/`release` 改签名接收 `startId`，把裸 `stopService()` 换成
+`stopSelf(startId)`，避免在排队的 `startForegroundService()` 还没 `startForeground()`
+时把服务停掉（否则 `ForegroundServiceDidNotStartInTimeException`）。
+
+**主体现状**（`ChatGenerationForegroundService.kt` 实测）：
+- 架构已重构为**共享期望状态**：`private val shouldRun = AtomicBoolean(false)`
+- `onStartCommand` 首先检查 `if (!shouldRun.get())`，用 `stopSelfResult(startId)` 收尾
+- 全文件**没有任何**裸 `stopService()`
+- 也不存在 `ACTION_ACQUIRE` / `ACTION_RELEASE` 这对 action
+
+**判定依据**：官方修复针对的是「无条件 `stopService()` 与排队 ACQUIRE 竞态」，
+主体已用原子标志把过期的 stop 降级为 no-op，注释原文即
+"It avoids stopService() racing a new start and killing its service instance"。
+硬套官方补丁会与主体架构冲突，收益为零。
+
+**回滚**：无需（未改动）
+
+---
+
+## #9 单元测试接入 CI（验证基础设施）
+
+- **日期**：2026-11-22
+- **主体提交**：`a835ba2`（接入）+ 后续（转硬门禁）
+- **问题**：workflow 只跑 `:app:assembleRelease`，仓库里的单测
+  **从未在 CI 执行**，包括本轮移植引入的 `McpToolSchemaTest` 与
+  `ChatCompletionsStreamDecoderNullTest`。等于没有回归网。
+- **改动**：`build-android.yml` 新增
+  `:ai:testDebugUnitTest :app:testDebugUnitTest --continue --stacktrace`
+  + 上传 `unit-test-reports-run<N>` artifact。
+- **首轮策略**：`continue-on-error: true` 取基线。
+- **基线结果（run #41，实测自 HTML 报告，非日志推断）**：
+
+  | 模块 | tests | failures | skipped | 测试类数 | duration |
+  |---|---|---|---|---|---|
+  | i  | **307**  | **0** | 0 | 37  | 2.479s |
+  | pp | **1723** | **0** | 0 | 217 | 12.197s |
+  | 合计  | **2030** | **0** | 0 | 254 | — |
+
+  两个移植测试**确认执行并通过**：
+  - `ChatCompletionsStreamDecoderNullTest` → 出现在 `ai` 报告索引
+  - `McpToolSchemaTest` → 出现在 `app` 报告索引
+
+- **结论**：基线全绿，已把 `continue-on-error` 移除，改为**硬门禁**
+  （测试失败即中断，不再产出 APK）。
+- **更正**：此前按 `git ls-tree` 文件数估算为「277 个测试文件」，
+  与实际执行的 **2030 个测试**不是同一口径（一个文件含多个测试方法）。
+  以报告数字为准。
+- **回滚**：`git revert a835ba2`（连同门禁改动）
+
+---
+
+## Phone Use 架构对照（阶段 E 前置，本轮不移植）
+
+- **产出**：`PHONE_USE_ARCHITECTURE.md`
+- **结论摘要**：
+  - 官方 `PhoneUseAccessibilityService`（`app/src/github/`）与主体
+    `RikkaAccessibilityService`（`app/src/main/`）是**两个独立无障碍服务**，
+    同时启用会抢屏幕，且用户需授权两次。
+  - 能力高度对称（截图 / 节点树 / 点击 / 滑动 / 输入 / 按键 / 应用启动 / 操作状态）。
+  - 决定：**保留主体服务为唯一底层**，Phone Use 只作工具层 + 适配层。
+  - 两边都**没有**单串行操作队列，需补。
+- **未执行原因**：本机无 ADB，无法验证「不抢屏幕」这一核心验收点。

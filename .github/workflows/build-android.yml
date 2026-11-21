@@ -74,13 +74,15 @@ jobs:
           cat local.properties
 
       # 先跑单元测试再打包：此前 workflow 只跑 assembleRelease，
-      # 277 个单测（app 219 / ai 58）从未在 CI 上执行过，等于没有回归网。
+      # 仓库里的单测从未在 CI 执行过，等于没有回归网。
       #
-      # 首轮故意 continue-on-error（取基线）：
-      # 这些测试从未跑过，大概率有既有失败，直接阻断会让 APK 产不出来。
-      # 先拿到基线报告，修到全绿后把 continue-on-error 去掉改成硬门禁。
-      - name: Run unit tests (app + ai) - baseline, non-blocking
-        continue-on-error: true
+      # run #41 已取到基线并确认全绿：
+      #   ai  307 tests / 0 failures / 0 skipped（37 个测试类）
+      #   app 1723 tests / 0 failures / 0 skipped（217 个测试类）
+      #   合计 2030 tests，含本轮移植的 McpToolSchemaTest 与
+      #   ChatCompletionsStreamDecoderNullTest
+      # 因此改为硬门禁：测试失败即中断，不再产出 APK。
+      - name: Run unit tests (app + ai)
         run: ./gradlew :ai:testDebugUnitTest :app:testDebugUnitTest --no-daemon --stacktrace --continue
 
       - name: Upload unit test reports

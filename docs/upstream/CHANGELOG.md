@@ -105,3 +105,37 @@
 **结论：本轮只能声明"编译通过、产物已生成"，不能声明"功能测试通过"。**
 下一步需要在 workflow 中补 `./gradlew :app:testDebugUnitTest` 或等价任务，
 才能在 CI 层面验证两个新单测。
+---
+
+## 本轮（2026-11-22）第二轮：单元测试接入并转硬门禁
+
+**CI run #41 — 成功**（[链接](https://github.com/GMYSJ/rikkahub-agent-gm/actions/runs/44945544278)）
+
+本轮补上了一个真实存在的验证缺口：workflow 此前**只跑 `assembleRelease`，从不执行任何单测**。
+
+### 基线实测结果（来源：artifact `unit-test-reports-run41` 的 HTML 报告）
+
+| 模块 | tests | failures | skipped | 测试类 | duration |
+|---|---|---|---|---|---|
+| `ai`  | **307**  | **0** | 0 | 37  | 2.479s |
+| `app` | **1723** | **0** | 0 | 217 | 12.197s |
+| **合计** | **2030** | **0** | 0 | 254 | — |
+
+本轮移植的两个测试**确认已执行并通过**：
+
+| 测试 | 所在模块 | 证据 |
+|---|---|---|
+| `McpToolSchemaTest` | `app` | 出现在 app 报告索引的 217 个类中 |
+| `ChatCompletionsStreamDecoderNullTest` | `ai` | 出现在 ai 报告索引的 37 个类中 |
+
+### 策略变化
+
+1. 首轮用 `continue-on-error: true` 取基线（测试从未跑过，怕阻断产出）。
+2. 基线确认 **0 失败**后，**已移除该开关，改为硬门禁** ——
+   今后测试失败即中断，不再产出 APK。
+
+### 数据口径更正
+
+此前 `AUDIT_REPORT.md` / 首轮 CHANGELOG 按 `git ls-tree` 统计为
+「277 个测试文件」，与实际的 **2030 个测试方法**不是同一口径。
+以报告数字为准，**测试文件数 ≠ 测试数**。
