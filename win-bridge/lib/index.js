@@ -741,6 +741,12 @@ export function apply(ctx, config) {
           hasSystem: typeof converted.options.system === 'string',
           toolCount: Array.isArray(converted.options.tools) ? converted.options.tools.length : 0,
           droppedTools: converted.droppedTools ?? 0,
+          // 请求体规模：体积过大可能被上游/网关直接拒绝（表现为「立刻断开」）。
+          bodyBytes: body.text.length,
+          totalContentChars: (converted.options.messages ?? []).reduce(
+            (sum, m) => sum + (Array.isArray(m.content)
+              ? m.content.reduce((s, b) => s + (typeof b.text === 'string' ? b.text.length : 0), 0)
+              : 0), 0),
           maxTokens: converted.options.maxTokens,
           adjustedMaxTokens: converted.adjustedMaxTokens,
         };
@@ -792,7 +798,18 @@ export function apply(ctx, config) {
             /** 记录本次流的进展，异常时能定位断在哪一步。 */
             const progress = { started: false, chunks: 0, firstTypes: [], lastType: null, aborted: false };
             lastLlmProgress = progress;
-            for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
+            // 探针：区分"调用 stream() 时就同步抛错"与"迭代过程中抛错"。
+            // 用户症状是「点发送后几乎立刻报错」，很可能死在建立阶段。
+            let iterable;
+            try {
+              iterable = ctx.llm.stream({ ...converted.options, signal: controller.signal });
+              progress.streamCreated = true;
+            } catch (syncErr) {
+              progress.syncThrow = true;
+              progress.syncError = syncErr instanceof Error ? syncErr.message : String(syncErr);
+              throw syncErr;
+            }
+            for await (const chunk of iterable) {
               progress.started = true;
               progress.chunks = ++chunkSeq;
               progress.lastType = chunk?.type ?? 'unknown';
