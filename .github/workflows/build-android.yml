@@ -73,6 +73,24 @@ jobs:
           printf 'storeFile=%s/release.keystore\nstorePassword=android\nkeyAlias=rikkahub\nkeyPassword=android\n' "$GITHUB_WORKSPACE" > local.properties
           cat local.properties
 
+      # 覆盖安装的硬保证。
+      #
+      # Android 只在「同包名 + 同签名 + versionCode 不小于已安装版本」时才允许覆盖安装。
+      # 包名（excp.rikkahub.agent）和签名（仓库内 release.keystore，固定 key）都已固定，
+      # 唯一会因多次提交而不变的就是 versionCode —— 之前连续几个包都是 190，
+      # 覆盖安装可能被系统判定为降级而拒绝。
+      #
+      # 这里把 versionCode 抬到「run_number + 190」：
+      #   - 单调递增，永不倒退
+      #   - 只改构建产物里的值，不改仓库里的 build.gradle.kts
+      #   - run #43 及以前的老包 versionCode 更小，新包一律能覆盖它们
+      - name: Ensure versionCode can always overwrite-install
+        run: |
+          BUMP=$(( ${{ github.run_number }} + 190 ))
+          echo "bumping versionCode -> $BUMP (was: $(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1))"
+          sed -i -E "s/versionCode = [0-9]+/versionCode = $BUMP/" app/build.gradle.kts
+          grep -n "versionCode = " app/build.gradle.kts | head -3
+
       # 先跑单元测试再打包：此前 workflow 只跑 assembleRelease，
       # 仓库里的单测从未在 CI 执行过，等于没有回归网。
       #
@@ -102,9 +120,37 @@ jobs:
         run: |
           VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
           PKG=$(grep -oP 'applicationId = "\K[^"]+' app/build.gradle.kts | head -1)
-          echo "version=$VER applicationId=$PKG"
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1)
+          echo "version=$VER versionCode=$CODE applicationId=$PKG"
           cp app/build/outputs/apk/release/app-arm64-v8a-release.apk "RikkaHub-$VER-arm64-v8a.apk"
           ls -la "RikkaHub-$VER-arm64-v8a.apk"
+
+      # versionName/versionCode 在多次构建间可能完全相同（本仓常见），
+      # 只有 SHA-256 能唯一区分产物。写进 Step Summary，便于事后核对装的是哪个包。
+      - name: Compute APK SHA-256 and write build summary
+        run: |
+          APK=$(ls RikkaHub-*-arm64-v8a.apk | head -1)
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$APK")
+          {
+            echo "## RikkaHub build run #${{ github.run_number }}"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| commit | \`${GITHUB_SHA}\` |"
+            echo "| branch | \`${GITHUB_REF_NAME}\` |"
+            echo "| versionName | \`$VER\` |"
+            echo "| versionCode | \`$CODE\` |"
+            echo "| APK 文件 | \`$APK\` |"
+            echo "| APK 字节数 | `$SIZE` |"
+            echo "| applicationId | `$(grep -oP 'applicationId = \"\K[^\"]+' app/build.gradle.kts | head -1).agent` |"
+            echo "| **SHA-256** | \`$SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "APK=$APK"
+          echo "SHA256=$SHA"
+          echo "SIZE=$SIZE"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
