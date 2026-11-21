@@ -73,23 +73,39 @@ jobs:
           printf 'storeFile=%s/release.keystore\nstorePassword=android\nkeyAlias=rikkahub\nkeyPassword=android\n' "$GITHUB_WORKSPACE" > local.properties
           cat local.properties
 
-      # 覆盖安装的硬保证。
+      # 覆盖安装策略：**固定 versionCode，绝不自动递增**。
       #
-      # Android 只在「同包名 + 同签名 + versionCode 不小于已安装版本」时才允许覆盖安装。
-      # 包名（excp.rikkahub.agent）和签名（仓库内 release.keystore，固定 key）都已固定，
-      # 唯一会因多次提交而不变的就是 versionCode —— 之前连续几个包都是 190，
-      # 覆盖安装可能被系统判定为降级而拒绝。
+      # Android 规则：同包名 + 同签名 + versionCode 不小于已装版本，才允许覆盖安装。
+      #   versionCode 更大 -> 能覆盖（升级）
+      #   versionCode 相等 -> 能覆盖（**双向，可回退**）
+      #   versionCode 更小 -> 拒绝（INSTALL_FAILED_VERSION_DOWNGRADE）
       #
-      # 这里把 versionCode 抬到「run_number + 190」：
-      #   - 单调递增，永不倒退
-      #   - 只改构建产物里的值，不改仓库里的 build.gradle.kts
-      #   - run #43 及以前的老包 versionCode 更小，新包一律能覆盖它们
-      - name: Ensure versionCode can always overwrite-install
+      # 需求是「新版本能覆盖旧版本；新版本翻车时，旧版本还能装回去」，
+      # 而工作区数据有几个 G，卸载重装代价太高。要做到双向可覆盖，
+      # 唯一解就是所有包保持**相同 versionCode**（190）。
+      #
+      # 所以这里只做校验，不改值：一旦有人误改 versionCode，构建直接失败，
+      # 避免产出无法双向覆盖的包。签名与包名也别动：
+      #   applicationId = excp.rikkahub.agent
+      #   signing        = 仓库内 release.keystore（固定 key）
+      - name: Verify versionCode stays fixed (bidirectional overwrite-install)
         run: |
-          BUMP=$(( ${{ github.run_number }} + 190 ))
-          echo "bumping versionCode -> $BUMP (was: $(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1))"
-          sed -i -E "s/versionCode = [0-9]+/versionCode = $BUMP/" app/build.gradle.kts
-          grep -n "versionCode = " app/build.gradle.kts | head -3
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1)
+          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          EXPECTED=190
+          echo "versionCode=$CODE versionName=$NAME (expected $EXPECTED)"
+          if [ "$CODE" != "$EXPECTED" ]; then
+            echo "::error::versionCode 必须是 $EXPECTED，否则新老包无法双向覆盖安装（会丢工作区数据）。"
+            exit 1
+          fi
+          APKID=$(grep -oP 'applicationId = "\K[^"]+' app/build.gradle.kts | head -1)
+          echo "applicationId=$APKID.agent"
+          if [ -f release.keystore ]; then
+            echo "release.keystore present (fixed signing key)"
+          else
+            echo "::error::release.keystore 缺失，签名会变，无法覆盖安装。"
+            exit 1
+          fi
 
       # 先跑单元测试再打包：此前 workflow 只跑 assembleRelease，
       # 仓库里的单测从未在 CI 执行过，等于没有回归网。
@@ -146,7 +162,10 @@ jobs:
             echo "| APK 文件 | \`$APK\` |"
             echo "| APK 字节数 | `$SIZE` |"
             echo "| applicationId | `$(grep -oP 'applicationId = \"\K[^\"]+' app/build.gradle.kts | head -1).agent` |"
-            echo "| **SHA-256** | \`$SHA\` |"
+            echo "| **SHA-256** | `$SHA` |"
+            echo ""
+            echo "versionCode 固定为 \`$CODE\`：可覆盖安装任意历史包，也可用任意历史包回退覆盖本包。"
+            echo "回退时直接从旧 run 的 artifact 下载对应 APK 安装即可，无需卸载。"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "APK=$APK"
           echo "SHA256=$SHA"
