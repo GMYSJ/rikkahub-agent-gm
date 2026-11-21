@@ -106,7 +106,7 @@ class SkillsVM(
                     return@launch
                 }
 
-                val skillMdContent = downloadText(skillMdEntry.second) ?: run {
+                val skillMdContent = downloadBytes(skillMdEntry.second)?.toString(Charsets.UTF_8) ?: run {
                     withContext(Dispatchers.Main) { onResult(false, "Failed to download SKILL.md — check the URL and your network") }
                     return@launch
                 }
@@ -118,9 +118,10 @@ class SkillsVM(
                     return@launch
                 }
 
-                val fileContents = LinkedHashMap<String, String>()
+                // 按字节下载保存，避免图片等二进制附属文件被当作 UTF-8 文本解码而损坏
+                val fileContents = LinkedHashMap<String, ByteArray>()
                 for ((relativePath, downloadUrl) in files) {
-                    val content = downloadText(downloadUrl)
+                    val content = if (relativePath == "SKILL.md") skillMdContent.toByteArray() else downloadBytes(downloadUrl)
                     if (content == null) {
                         withContext(Dispatchers.Main) { onResult(false, "Failed to download file: $relativePath") }
                         return@launch
@@ -128,7 +129,7 @@ class SkillsVM(
                     fileContents[relativePath] = content
                 }
 
-                val saved = skillManager.saveSkillFilesAtomically(name, fileContents)
+                val saved = skillManager.saveSkillFileBytesAtomically(name, fileContents)
                 if (!saved) {
                     withContext(Dispatchers.Main) { onResult(false, "Failed to save skill files") }
                     return@launch
@@ -151,7 +152,7 @@ class SkillsVM(
      *    + HTML guard + transcoder pipeline as the GitHub URL path).
      *  - `.zip` (or `application/zip` MIME): extract via [SkillZipImporter] to a temp dir
      *    inside the app's cache, locate the SKILL.md, copy every file inside that root
-     *    into the SkillManager via [SkillManager.saveSkillFilesAtomically].
+     *    into the SkillManager via [SkillManager.saveSkillFileBytesAtomically].
      *
      * On failure, [onResult] receives `false` + a localised-string-key (`skill_import_*`)
      * the UI looks up via stringResource. On success, [onResult] receives `true` + the
@@ -304,13 +305,13 @@ class SkillsVM(
             val frontmatter = SkillFrontmatterParser.parse(skillMd.readText())
             val skillName = frontmatter["name"]?.takeIf { it.isNotBlank() }
                 ?: return false to "skill_import_missing_skill_md"
-            // Collect every file into a relativePath -> content map, then atomic-save.
-            val files = LinkedHashMap<String, String>()
+            // Collect every file into a relativePath -> bytes map, then atomic-save.
+            val files = LinkedHashMap<String, ByteArray>()
             rootDir.walkTopDown().filter { it.isFile }.forEach { f ->
                 val rel = f.relativeTo(rootDir).path.replace(File.separatorChar, '/')
-                files[rel] = f.readText()
+                files[rel] = f.readBytes()
             }
-            val saved = skillManager.saveSkillFilesAtomically(skillName, files)
+            val saved = skillManager.saveSkillFileBytesAtomically(skillName, files)
             return if (saved) true to skillName else false to "skill_import_unsupported_file_type"
         } finally {
             runCatching { workDir.deleteRecursively() }
@@ -326,7 +327,7 @@ class SkillsVM(
         result: MutableList<Pair<String, String>>,
     ): Boolean {
         val apiUrl = "https://api.github.com/repos/$owner/$repo/contents/$dirPath?ref=$branch"
-        val json = downloadText(apiUrl) ?: return false
+        val json = downloadBytes(apiUrl)?.toString(Charsets.UTF_8) ?: return false
         val array = JSONArray(json)
         for (i in 0 until array.length()) {
             val item = array.getJSONObject(i)
@@ -370,14 +371,18 @@ class SkillsVM(
         return GitHubRepoInfo(owner, repo, branch, subPath)
     }
 
-    private fun downloadText(url: String): String? {
+    private fun downloadBytes(url: String): ByteArray? {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 30_000
         connection.setRequestProperty("Accept", "application/vnd.github+json")
         return try {
-            if (connection.responseCode == 200) connection.inputStream.bufferedReader().readText()
-            else null
+            val code = connection.responseCode
+            // 未登录的 GitHub API 每小时仅 60 次，超限时给出明确提示而不是笼统的"读取失败"
+            if ((code == 403 || code == 429) && connection.getHeaderField("X-RateLimit-Remaining") == "0") {
+                error("GitHub API 请求次数已达上限，请稍后再试")
+            }
+            if (code == 200) connection.inputStream.use { it.readBytes() } else null
         } finally {
             connection.disconnect()
         }
