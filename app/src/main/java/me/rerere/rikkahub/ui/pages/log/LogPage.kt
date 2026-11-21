@@ -50,6 +50,8 @@ import me.rerere.rikkahub.ui.components.ui.JsonTree
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.utils.JsonInstantPretty
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -256,6 +258,7 @@ private fun RequestLogCard(log: LogEntry.RequestLog, onClick: () -> Unit) {
 private fun RequestLogDetail(log: LogEntry.RequestLog) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
     val clipboard = LocalClipboard.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     SelectionContainer {
@@ -335,9 +338,18 @@ private fun RequestLogDetail(log: LogEntry.RequestLog) {
                         IconButton(
                             onClick = {
                                 scope.launch {
-                                    clipboard.setClipEntry(
-                                        ClipEntry(ClipData.newPlainText("Request Body", body))
-                                    )
+                                    try {
+                                        clipboard.setClipEntry(
+                                            ClipEntry(ClipData.newPlainText("Request Body", body))
+                                        )
+                                    } catch (e: RuntimeException) {
+                                        // 内容过大时 Binder 会抛出 TransactionTooLargeException (被包装为 RuntimeException)
+                                        Toast.makeText(
+                                            context,
+                                            "Copy failed: content too large for clipboard",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 }
                             }
                         ) {
