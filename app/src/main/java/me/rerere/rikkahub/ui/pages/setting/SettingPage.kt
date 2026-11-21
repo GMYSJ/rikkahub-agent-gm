@@ -271,6 +271,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text(stringResource(R.string.setting_page_mcp)) },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.SettingRemoteNode) },
+                        leadingContent = { Icon(HugeIcons.ServerStack01, null) },
+                        supportingContent = { Text("连接电脑 DSH，一次配置工具与模型") },
+                        headlineContent = { Text("远程 DSH 节点") },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingSubAgents) },
                         leadingContent = { Icon(HugeIcons.Robot01, null) },
                         supportingContent = { Text(stringResource(R.string.setting_page_sub_agents_desc)) },

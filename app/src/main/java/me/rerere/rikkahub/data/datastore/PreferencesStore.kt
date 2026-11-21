@@ -192,6 +192,7 @@ class SettingsStore(
 
         // MCP
         val MCP_SERVERS = stringPreferencesKey("mcp_servers")
+        val REMOTE_NODES = stringPreferencesKey("remote_nodes")
 
         // 子代理
         val SUB_AGENTS = stringPreferencesKey("sub_agents")
@@ -304,6 +305,7 @@ class SettingsStore(
                 preferences[ENABLE_WEB_FETCH_TOOLS] = settings.enableWebFetchTools
 
                 preferences[MCP_SERVERS] = JsonInstant.encodeToString(settings.mcpServers)
+                preferences[REMOTE_NODES] = JsonInstant.encodeToString(settings.remoteNodes)
                 preferences[SUB_AGENTS] = JsonInstant.encodeToString(settings.subAgents)
                 preferences[WEBDAV_CONFIG] = JsonInstant.encodeToString(settings.webDavConfig)
                 preferences[S3_CONFIG] = JsonInstant.encodeToString(settings.s3Config)
@@ -449,6 +451,14 @@ class SettingsStore(
                 mcpServers = preferences[MCP_SERVERS]?.let { raw ->
                     runCatching { JsonInstant.decodeFromString<List<McpServerConfig>>(raw) }.getOrElse {
                         Log.w(TAG, "Failed to decode mcpServers, using default", it)
+                        emptyList()
+                    }
+                } ?: emptyList(),
+                remoteNodes = preferences[REMOTE_NODES]?.let { raw ->
+                    runCatching {
+                        JsonInstant.decodeFromString<List<me.rerere.rikkahub.data.remote.RemoteNode>>(raw)
+                    }.getOrElse {
+                        Log.w(TAG, "Failed to decode remoteNodes, using default", it)
                         emptyList()
                     }
                 } ?: emptyList(),
@@ -897,6 +907,11 @@ data class Settings(
     val searchServiceSelected: Int = 0,
     val enableWebFetchTools: Boolean = true,
     val mcpServers: List<McpServerConfig> = emptyList(),
+    /**
+     * 内置远程 DSH 节点：一次配置同时生成 MCP 工具端点与 OpenAI 兼容模型 Provider。
+     * 默认空，旧安装可干净解码（本字段走独立 DataStore key）。
+     */
+    val remoteNodes: List<me.rerere.rikkahub.data.remote.RemoteNode> = emptyList(),
     /**
      * #36: named sub-agent profiles the model can dispatch to by name via
      * `subagent_dispatch`'s `agent` parameter. MUST default to an empty list so an install

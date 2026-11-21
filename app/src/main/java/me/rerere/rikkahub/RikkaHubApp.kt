@@ -41,6 +41,8 @@ import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.data.remote.RemoteNodeAutoSwitch
+import me.rerere.rikkahub.data.remote.RemoteNodeProbe
 import me.rerere.workspace.WorkspaceManager
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
@@ -116,6 +118,19 @@ class RikkaHubApp : Application() {
 
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
+
+        // 远程 DSH 节点：网络变化时自动探测并切换到当前最佳地址。
+        // 零节点时完全不工作，不影响未使用该功能的用户。
+        try {
+            RemoteNodeAutoSwitch(
+                context = this,
+                settingsStore = get<SettingsStore>(),
+                probe = RemoteNodeProbe(get<okhttp3.OkHttpClient>(), timeoutMs = 2_000L),
+                scope = get<AppScope>(),
+            ).start()
+        } catch (e: Exception) {
+            Log.w(TAG, "RemoteNodeAutoSwitch init failed", e)
+        }
 
         // Eagerly construct ChatService on the main thread. Its constructor calls
         // LifecycleRegistry.addObserver which throws if it runs off-main, and the Telegram

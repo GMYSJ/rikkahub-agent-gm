@@ -120,6 +120,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
 import me.rerere.rikkahub.ui.pages.setting.SettingFilesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMcpPage
+import me.rerere.rikkahub.ui.pages.setting.SettingRemoteNodePage
 import me.rerere.rikkahub.ui.pages.setting.SettingModelPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPage
 import me.rerere.rikkahub.ui.pages.setting.SettingProviderDetailPage
@@ -501,6 +502,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingMcpPage()
                             }
 
+                            entry<Screen.SettingRemoteNode> {
+                                SettingRemoteNodePage()
+                            }
+
                             entry<Screen.SettingSubAgents> {
                                 SettingSubAgentsPage()
                             }
@@ -779,6 +784,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingMcp : Screen
+
+    @Serializable
+    data object SettingRemoteNode : Screen
 
     @Serializable
     data object SettingSubAgents : Screen
