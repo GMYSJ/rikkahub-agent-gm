@@ -46,6 +46,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiMagic
 import me.rerere.hugeicons.stroke.Alert01
 import me.rerere.hugeicons.stroke.Tick01
+import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Book01
 import me.rerere.hugeicons.stroke.Book03
 import me.rerere.hugeicons.stroke.Bookshelf01
@@ -139,6 +140,13 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                     BackButton()
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            navController.navigate(Screen.QuickStart)
+                        }
+                    ) {
+                        Icon(HugeIcons.Rocket01, stringResource(R.string.quick_start_page_title))
+                    }
                     IconButton(
                         onClick = {
                             navController.navigate(Screen.SettingsSearch)

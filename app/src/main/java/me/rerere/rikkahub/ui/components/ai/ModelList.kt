@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.components.ai
 
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -849,6 +850,59 @@ fun ModelAbilityTag(model: Model) {
                         modifier = Modifier.size(LocalTextStyle.current.lineHeight.toDp()),
                     )
                 }
+            }
+        }
+    }
+}
+
+// 显示当前模型的胶囊按钮，样式和 Select 保持一致，点击后由调用方打开模型列表
+// 给了 onClear 时，选了模型后右侧显示清除按钮；placeholder 是没选模型时显示的文字
+@Composable
+internal fun ModelField(
+    model: Model?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = stringResource(R.string.model_list_select_model),
+    onClear: (() -> Unit)? = null,
+) {
+    Surface(
+        onClick = onClick,
+        tonalElevation = 4.dp,
+        shape = CircleShape,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (model != null) {
+                AutoAIIcon(
+                    name = model.modelId,
+                    modifier = Modifier.size(24.dp),
+                    color = Color.Transparent,
+                )
+            }
+            Text(
+                text = model?.displayName ?: placeholder,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (onClear != null && model != null) {
+                Icon(
+                    imageVector = HugeIcons.Cancel01,
+                    contentDescription = "Clear",
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClick = onClear),
+                )
+            } else {
+                Icon(
+                    imageVector = HugeIcons.ArrowDown01,
+                    contentDescription = null,
+                )
             }
         }
     }

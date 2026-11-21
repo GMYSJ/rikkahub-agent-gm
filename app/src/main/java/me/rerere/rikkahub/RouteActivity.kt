@@ -134,6 +134,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingSubAgentsPage
 import me.rerere.rikkahub.ui.pages.setting.SettingTelegramPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
+import me.rerere.rikkahub.ui.pages.quickstart.QuickStartPage
 import me.rerere.rikkahub.ui.pages.stats.StatsPage
 import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
@@ -502,6 +503,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingMcpPage()
                             }
 
+                            entry<Screen.QuickStart> {
+                                QuickStartPage()
+                            }
+
                             entry<Screen.SettingRemoteNode> {
                                 SettingRemoteNodePage()
                             }
@@ -793,6 +798,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object SettingDonate : Screen
+
+    @Serializable
+    data object QuickStart : Screen
 
     @Serializable
     data object SettingFiles : Screen
