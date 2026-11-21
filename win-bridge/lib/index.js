@@ -313,6 +313,9 @@ export function apply(ctx, config) {
   /** 最近一次模型调用抛出的错误（流式 catch 路径，排障关键）。 */
   let lastLlmError = null;
 
+  /** 最近一次流式调用的进展（区分"流没开始"与"中途断开"）。 */
+  let lastLlmProgress = null;
+
   /**
    * 调用审计：最近 N 次工具调用的记录。
    *
@@ -785,11 +788,20 @@ export function apply(ctx, config) {
             set hasToolCall(v) { state.hasToolCall = v; },
           };
           try {
+            let chunkSeq = 0;
+            /** 记录本次流的进展，异常时能定位断在哪一步。 */
+            const progress = { started: false, chunks: 0, firstTypes: [], lastType: null, aborted: false };
+            lastLlmProgress = progress;
             for await (const chunk of ctx.llm.stream({ ...converted.options, signal: controller.signal })) {
+              progress.started = true;
+              progress.chunks = ++chunkSeq;
+              progress.lastType = chunk?.type ?? 'unknown';
+              if (progress.firstTypes.length < 5) progress.firstTypes.push(chunk?.type ?? 'unknown');
               const out = chunkToSse(chunk, sseCtx);
               for (const frame of out.frames) res.write(frame);
               if (out.finishReason !== null) state.finished = true;
             }
+            progress.completed = true;
             // 兜底：如果流结束时 DSH 没有发 finish 帧，我们补一个，
             // 否则客户端会一直等 [DONE]。
             if (!state.finished) {
@@ -802,7 +814,15 @@ export function apply(ctx, config) {
             const friendly = friendlyLlmError(raw);
             // 记录到诊断：这类"连接被中断"在客户端只表现为
             // "unexpected end of stream"，没有这层记录就无从排查。
-            lastLlmError = { at: new Date().toISOString(), model: modelName, raw, friendly };
+            lastLlmError = {
+              at: new Date().toISOString(),
+              model: modelName,
+              raw,
+              name: err instanceof Error ? err.name : typeof err,
+              friendly,
+              clientAborted: controller.signal.aborted,
+              progress: lastLlmProgress,
+            };
             try {
               res.write(sseFrameForError(id, modelName, friendly));
               res.write(SSE_DONE);
@@ -958,6 +978,7 @@ export function apply(ctx, config) {
           lastLlmChunks,
           lastLlmRequest,
           lastLlmError,
+          lastLlmProgress,
         }));
         return;
       }
