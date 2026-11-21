@@ -51,6 +51,7 @@ import {
   mapFinishReason,
   extractFinishError,
   friendlyLlmError,
+  preprocessingImages,
 } from './llm.js';
 
 /**
@@ -756,6 +757,24 @@ export function apply(ctx, config) {
           sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, 'request body is not valid JSON'));
           return;
         }
+        // 图片预处理：把 image_url 换 DSH 的 ImageBlock（真正让模型看图）。
+        // 必须在同步转换之前做，因为 saveImages 是异步的。
+        // 没有附件服务时自动退化成文字占位，不影响其它块。
+        const attachmentsService = typeof ctx.get === 'function' ? ctx.get('attachments') : undefined;
+        let savedImages = 0;
+        try {
+          savedImages = await preprocessingImages(parsed, attachmentsService);
+        } catch (e) {
+          lastLlmError = {
+            at: new Date().toISOString(),
+            model: '(unknown)',
+            raw: `image preprocessing failed: ${e instanceof Error ? e.message : String(e)}`,
+            name: 'ImagePreprocessFailed',
+            friendly: '处理图片时出错，已退回文字占位',
+            clientAborted: false,
+            progress: null,
+          };
+        }
         const converted = openAiRequestToGenerateOptions(parsed);
         if (!converted.ok) {
           sendJson(res, 400, errorEnvelope(ERROR_CODE.BAD_REQUEST, converted.reason));
@@ -781,6 +800,7 @@ export function apply(ctx, config) {
           // 工具名列表：不同模型对某些工具名/描述可能不兼容
           // （实测 workbuddy 会拒绝非 ASCII 工具名），排障时需要看全量。
           toolNames: (converted.options.tools ?? []).map((t) => t.name),
+          savedImages,
           maxTokens: converted.options.maxTokens,
           adjustedMaxTokens: converted.adjustedMaxTokens,
         };

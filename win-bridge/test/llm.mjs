@@ -21,6 +21,8 @@ import {
   MIN_MAX_TOKENS,
   friendlyLlmError,
   degradeImageBlocks,
+  parseDataUrlImage,
+  preprocessingImages,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -452,6 +454,53 @@ test('degradeImageBlocks 不动普通文本块', () => {
   const out = degradeImageBlocks([{ type: 'text', text: 'hello' }]);
   assert.equal(out[0].type, 'text');
   assert.equal(out[0].text, 'hello');
+});
+test('parseDataUrlImage 正确解析 data URL', () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const r = parseDataUrlImage(`data:image/png;base64,${png}`);
+  assert.equal(r.ok, true);
+  assert.equal(r.mediaType, 'image/png');
+  assert.ok(r.data.length > 0, '应解出真实字节');
+  assert.equal(parseDataUrlImage('https://example.com/a.png').ok, false, '远程 URL 不支持');
+  assert.equal(parseDataUrlImage('').ok, false);
+});
+test('preprocessingImages 有附件服务时转成 ImageBlock', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const body = {
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '看图' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } },
+      ],
+    }],
+  };
+  const fakeRef = { attachmentId: 'att_1', mediaType: 'image/png', bytes: 68, width: 1, height: 1 };
+  const attachments = {
+    saveImages: async (inputs) => {
+      assert.equal(inputs.length, 1);
+      assert.equal(inputs[0].mediaType, 'image/png');
+      return [fakeRef];
+    },
+  };
+  const saved = await preprocessingImages(body, attachments);
+  assert.equal(saved, 1);
+  const blocks = body.messages[0].content;
+  assert.equal(blocks[1].type, 'image', '应转成 DSH ImageBlock');
+  assert.equal(blocks[1].attachment, fakeRef);
+});
+test('preprocessingImages 无附件服务时降级为文字', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const body = {
+    messages: [{
+      role: 'user',
+      content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${png}` } }],
+    }],
+  };
+  const saved = await preprocessingImages(body, undefined);
+  assert.equal(saved, 0);
+  assert.equal(body.messages[0].content[0].type, 'text');
+  assert.match(body.messages[0].content[0].text, /图片/);
 });
 test('truncateContentBlocks 不动短文本与非文本块', () => {
   const blocks = [

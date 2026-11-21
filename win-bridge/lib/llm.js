@@ -344,18 +344,134 @@ export function normalizeUsage(usage) {
 }
 
 /**
- * 把 OpenAI 风格的 image_url 内容块降级成文字占位。
+ * 解析 OpenAI image_url 里的图片数据。
  *
- * 为什么必须做：DSH 的 `ImageBlock` 是 `{type:'image', attachment: ImageAttachmentRef}`
- * （dsh-llm/src/types.ts:86-89），需要 attachment service 的引用，
- * 桥无法凭空构造。直接透传 `{type:'image_url', image_url:{url}}` 会让
- * DSH 适配器读到不认识的块类型。
+ * 支持两种形式：
+ *  - data URL：`data:image/png;base64,XXXX`
+ *  - 远程 URL：http(s)://...（需要下载，成本高，这里只识别不下载）
  *
- * 而且图片 base64 会把请求体撑到几 MB —— 实测正常长对话已 326 KB，
- * 多一张 1164×2560 的截图就超过旧上限 512 KB，导致 413。
+ * @param {unknown} rawUrl - image_url.url 的原始值。
+ * @returns {{ok: true, data: Uint8Array, mediaType: string} | {ok: false, reason: string}}
+ */
+export function parseDataUrlImage(rawUrl) {
+  if (typeof rawUrl !== 'string' || rawUrl === '') {
+    return { ok: false, reason: 'empty image url' };
+  }
+  if (!rawUrl.startsWith('data:')) {
+    return { ok: false, reason: 'remote image url (not downloaded)' };
+  }
+  const comma = rawUrl.indexOf(',');
+  if (comma < 0) return { ok: false, reason: 'malformed data url' };
+  const meta = rawUrl.slice(5, comma);
+  if (!meta.includes('base64')) return { ok: false, reason: 'non-base64 data url' };
+  const mediaType = meta.split(';')[0] || 'image/png';
+  try {
+    const b64 = rawUrl.slice(comma + 1);
+    const bin = atob(b64);
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) data[i] = bin.charCodeAt(i);
+    if (data.length === 0) return { ok: false, reason: 'decoded image is empty' };
+    return { ok: true, data, mediaType };
+  } catch (e) {
+    return { ok: false, reason: `base64 decode failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * 把 OpenAI image_url 内容块转成 DSH 的 ImageBlock（真正让模型看图）。
  *
- * 降级策略：换成 "[图片: <大小>]" 文本，既保留"这里原本有图"的语义，
- * 又不让请求体爆炸。模型会被告知看不到图，可以自然地请用户描述。
+ * DSH 的图片不是内联 base64，而是附件引用：
+ *   ImageBlock = { type:'image', attachment: ImageAttachmentRef }
+ *   （dsh-llm/src/types.ts:86-89）
+ * 附件必须先落地进 attachment store：
+ *   ctx.attachments.saveImages([{ data, mediaType, name }]) → ImageAttachmentRef[]
+ *   （dsh-acp/src/content.ts:150-166 是现成范例）
+ *
+ * 若 attachments 服务不可用（profile 没挂附件组件）或图片解析失败，
+ * 退回文字占位——宁可让模型知道"这里有图但看不到"，
+ * 也不要把整个对话搞崩（旧版就是直接透传导致 413 / 连接中断）。
+ *
+ * @param {Array<object>} blocks - 原始内容块数组。
+ * @param {{saveImages?: Function} | undefined} attachments - DSH 附件服务。
+ * @returns {Promise<Array<object>>} 转换后的内容块数组。
+ */
+export async function convertImageBlocks(blocks, attachments) {
+  if (!Array.isArray(blocks)) return blocks;
+  const out = [];
+  for (const b of blocks) {
+    if (b === null || typeof b !== 'object') {
+      out.push(b);
+      continue;
+    }
+    const type = String(b.type ?? '');
+    if (type !== 'image_url') {
+      out.push(b);
+      continue;
+    }
+    const rawUrl = b.image_url?.url ?? b.image_url ?? '';
+    const parsed = parseDataUrlImage(rawUrl);
+    if (!parsed.ok) {
+      const hint = typeof rawUrl === 'string' && rawUrl.startsWith('data:')
+        ? `base64 约 ${Math.round(rawUrl.length / 1024)} KB`
+        : parsed.reason;
+      out.push({ type: 'text', text: `[图片：${hint}；当前通道未能传递图片内容，如需判断请让用户用文字描述]` });
+      continue;
+    }
+    // 有附件服务就真正入库，让模型看到图。
+    if (attachments !== undefined && typeof attachments.saveImages === 'function') {
+      try {
+        const refs = await attachments.saveImages([{
+          data: parsed.data,
+          mediaType: parsed.mediaType,
+          name: 'mobile-upload',
+        }]);
+        if (Array.isArray(refs) && refs.length === 1 && refs[0] !== undefined) {
+          out.push({ type: 'image', attachment: refs[0] });
+          continue;
+        }
+      } catch (_saveFailed) {
+        // 落到下面的文字占位
+      }
+    }
+    out.push({
+      type: 'text',
+      text: `[图片：base64 约 ${Math.round(parsed.data.length / 1024)} KB；当前通道未能传递图片内容，如需判断请让用户用文字描述]`,
+    });
+  }
+  return out;
+}
+
+/**
+ * 预扫描：把请求体里所有 image_url 块转成 DSH 的 ImageBlock 或文字占位。
+ *
+ * 因为 `saveImages` 是异步的，而 `openAiRequestToGenerateOptions` 保持同步
+ * （测试与既有调用都依赖它同步返回），所以图片处理必须**先**在这步完成：
+ * 把每个 image_url 就地替换成 `{type:'image', attachment}` 或文字块，
+ * 之后同步转换器只需原样接受这些块即可。
+ *
+ * @param {unknown} body - OpenAI 请求体（会被就地修改 messages）。
+ * @param {{saveImages?: Function} | undefined} attachments - DSH 附件服务。
+ * @returns {Promise<number>} 成功转成 ImageBlock 的图片数量。
+ */
+export async function preprocessingImages(body, attachments) {
+  if (body === null || typeof body !== 'object') return 0;
+  const messages = /** @type {any} */ (body).messages;
+  if (!Array.isArray(messages)) return 0;
+  let saved = 0;
+  for (const m of messages) {
+    if (m === null || typeof m !== 'object') continue;
+    if (!Array.isArray(m.content)) continue;
+    const hasImage = m.content.some((b) => b !== null && typeof b === 'object' && b.type === 'image_url');
+    if (!hasImage) continue;
+    const converted = await convertImageBlocks(m.content, attachments);
+    saved += converted.filter((b) => b !== null && typeof b === 'object' && b.type === 'image').length;
+    m.content = converted;
+  }
+  return saved;
+}
+
+/**
+ * 同步版降级：仅用于没有附件服务的场景。
  *
  * @param {Array<object>} blocks - 原始内容块数组。
  * @returns {Array<object>} 降级后的内容块数组。
@@ -366,9 +482,7 @@ export function degradeImageBlocks(blocks) {
     if (b === null || typeof b !== 'object') return b;
     const type = String(b.type ?? '');
     if (type !== 'image_url' && type !== 'image') return b;
-    const url = type === 'image_url'
-      ? (b.image_url?.url ?? b.image_url ?? '')
-      : '';
+    const url = type === 'image_url' ? (b.image_url?.url ?? b.image_url ?? '') : '';
     const sizeHint = typeof url === 'string' && url.startsWith('data:')
       ? `base64 约 ${Math.round(url.length / 1024)} KB`
       : (typeof url === 'string' && url !== '' ? '远程图片' : '未知');
