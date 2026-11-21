@@ -1,48 +1,33 @@
 package me.rerere.rikkahub.ui.pages.quickstart
 
-import androidx.annotation.StringRes
-import me.rerere.rikkahub.R
-import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.unit.dp
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowDataTransferVertical
-import me.rerere.hugeicons.stroke.Rocket01
+import androidx.compose.ui.res.stringResource
+import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.nav.BackButton
-import me.rerere.rikkahub.ui.components.ui.PagerTab
-import me.rerere.rikkahub.ui.components.ui.PagerTabs
 import me.rerere.rikkahub.ui.theme.CustomColors
 import org.koin.androidx.compose.koinViewModel
 
-private enum class QuickStartTab(
-    override val icon: ImageVector,
-    @param:StringRes private val labelRes: Int,
-) : PagerTab {
-    GENERAL(HugeIcons.Rocket01, R.string.quick_start_page_tab_general),
-    DEEPSEEK(HugeIcons.ArrowDataTransferVertical, R.string.quick_start_page_tab_deepseek);
-
-    override val label: String
-        @Composable get() = stringResource(labelRes)
-}
-
+/**
+ * 快速入门页（迁移自官方 3.3.1，简化版）。
+ *
+ * 官方版本有两个标签：「通用配置」和「从 DeepSeek 迁移」。
+ * DeepSeek 迁移依赖官方 3.x 对 Conversation 数据模型的 config 字段改造
+ * （ConversationConfig / DeepSeekMigrator / DeepSeekImporter），
+ * 这属于数据库与数据结构层面的大改，需要单独评估旧数据兼容。
+ * 本阶段先迁移「通用配置」标签 —— 引导用户配置模型/服务商/搜索/TTS，
+ * 这是用户打开 app 就能看到并使用的新功能。
+ */
 @Composable
 fun QuickStartPage(vm: QuickStartVM = koinViewModel()) {
-    val pagerState = rememberPagerState { QuickStartTab.entries.size }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     Scaffold(
@@ -61,26 +46,8 @@ fun QuickStartPage(vm: QuickStartVM = koinViewModel()) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .consumeWindowInsets(contentPadding)
         ) {
-            PagerTabs(
-                pagerState = pagerState,
-                tabs = QuickStartTab.entries,
-                modifier = Modifier.padding(vertical = 4.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp),
-            )
-
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            ) { page ->
-                when (QuickStartTab.entries[page]) {
-                    QuickStartTab.GENERAL -> QuickStartGeneralTab(vm = vm)
-                    QuickStartTab.DEEPSEEK -> QuickStartDeepSeekTab(vm = vm)
-                }
-            }
+            QuickStartGeneralTab(vm = vm)
         }
     }
 }
