@@ -283,3 +283,70 @@
   - 决定：**保留主体服务为唯一底层**，Phone Use 只作工具层 + 适配层。
   - 两边都**没有**单串行操作队列，需补。
 - **未执行原因**：本机无 ADB，无法验证「不抢屏幕」这一核心验收点。
+---
+
+## #10 协程取消异常被吞 → 事务内无限循环
+
+- **日期**：2026-11-22
+- **官方**：`923ad3d91`（Fixes #2151）
+- **主体提交**：`0a1d13f`
+- **功能**：`ConversationRepository.loadMessageNodes` 在 `withTransaction` 内
+  用 `catch (IllegalStateException)` 丢弃"读不出的节点"并 `continue`。
+  但 `CancellationException` 是 `IllegalStateException` 的子类 ——
+  用户取消后取消异常被吞，循环继续，**在事务内无限空转**。
+- **修改**：`ConversationRepository.kt` +4 行（新增 `catch (CancellationException) { throw e }`，
+  置于 `IllegalStateException` 之前）
+- **迁移方式**：逐字移植（+4，与官方一致）
+- **回滚**：`git revert 0a1d13f`
+
+---
+
+## #11 MCP 空名称请求头导致连接失败
+
+- **日期**：2026-11-22
+- **官方**：`8b696c0cf`（#1949）
+- **功能**：设置页「添加请求头」后未填写名称会留下空字符串头，
+  OkHttp 直接抛 `name is empty`，整个 MCP 连接失败。
+- **修改**：`McpSessionRegistry.kt` 的 `resolvedHeaders()` 过滤 `it.first.isNotBlank()`
+- **回滚**：`git revert 0a1d13f`
+
+---
+
+## #12 复制超大请求体导致剪贴板闪退
+
+- **日期**：2026-11-22
+- **官方**：`2d5c51bd5`（#1980）
+- **功能**：请求体过大时 Binder 抛 `TransactionTooLargeException`
+  （被包装为 `RuntimeException`），原 `setClipEntry` 未捕获 → 闪退。
+- **修改**：`LogPage.kt` 捕获 `RuntimeException` 并 Toast 提示；
+  新增 `LocalContext` / `Toast` 导入与 `val context`
+- **回滚**：`git revert 0a1d13f`
+
+---
+
+## 本轮评估后跳过的官方修复（有依据）
+
+| 官方 Commit | 内容 | 跳过理由 |
+|---|---|---|
+| `4391d5a5e` | Google 过滤工具参数 `propertyNames` | 主体 `GoogleProvider` **没有**这套 schema 字段白名单机制（`propertyNames`/`additionalProperties` 在主体中完全不存在），该修复无落点 |
+| `4e4bfa62b` | OpenAI 图片生成自定义分辨率被丢弃（#1978） | 主体图片尺寸走 `params.aspectRatio` 枚举映射（SQUARE/LANDSCAPE/PORTRAIT），**不存在** `params.size` 字符串字段，官方逻辑无可套用处 |
+| `a8508e232` | DeepSeek 导入 `#` 文件名崩溃 | `DeepSeekImporter.kt` / `RemoteFileStore.kt` 在主体中**不存在**（官方 3.x 新功能 `f93764e6a` / `fffa6e82e` 才引入） |
+| `72747fc9e` | 前台服务 `startForeground` 竞态 | 主体已用 `AtomicBoolean shouldRun` + `stopSelfResult` 解决同一问题，架构不同（详见 #8） |
+| `50bbc99bb` / `dfbe9a082` | markdown 公式/删除线渲染 | 主体用 `com.github.rikkahub:markdown`，无官方所用的 `bettertext` 依赖 |
+
+---
+
+## 移植取舍的量化依据（长期参考）
+
+官方自 `2.5.1` 以来改动 **1352 个文件**，其中：
+
+| 分类 | 数量 | 能否直接移植 |
+|---|---|---|
+| 主体中**存在** | **681** | 可评估移植 |
+| 主体中**不存在**（3.x 新增） | **671** | 无落点，需先有新功能载体 |
+
+在 681 个可移植文件中，**单文件纯 fix 且文件全部存在**的有 **30 个** ——
+这是最安全的移植池，本轮从中取 3 个。
+
+> 结论：后续每轮优先在「单文件/少文件 + 纯 fix + 文件存在」池中挑选，
+> 大改造（Phone Use、流式解码器重构、UI 改版）留到有真机回归能力后再做。

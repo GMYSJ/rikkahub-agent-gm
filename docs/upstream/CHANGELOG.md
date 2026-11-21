@@ -215,3 +215,38 @@ BUILD SUCCESSFUL in 17m 30s
 
 守卫已加入 workflow：versionCode 被改动或 keystore 丢失时构建直接失败，
 不会产出无法覆盖的包。详见 `OVERWRITE_INSTALL.md`。
+---
+
+## 本轮（2026-11-22）第四轮：3 项稳定性修复
+
+### run #45 — 成功（[链接](https://github.com/GMYSJ/rikkahub-agent-gm/actions/runs/44954042959)）
+
+commit `0a1d13f`，23 步全 success，无异常步骤。
+
+| 项 | 值 |
+|---|---|
+| 产物 | `RikkaHub-run45-arm64`，50.17 MB |
+| versionCode 守卫 | **success**（仍为 190，双向覆盖能力保持） |
+| 测试 | ai 308 + app 1723 = **2031，0 失败** |
+
+### 本轮移植（全部 +4 行以内的精确改动）
+
+| 官方 Commit | 内容 | 影响 |
+|---|---|---|
+| `923ad3d91` | 协程取消异常被 `catch(IllegalStateException)` 吞掉 | **取消对话后事务内无限循环** → 已修 |
+| `8b696c0cf` | MCP 空名称请求头 | OkHttp 抛 `name is empty`，MCP 连接失败 → 已修 |
+| `2d5c51bd5` | 复制超大请求体 | `TransactionTooLargeException` 闪退 → 已修（改为 Toast 提示） |
+
+### 本轮评估后跳过（均有依据，非遗漏）
+
+| 官方 Commit | 跳过理由 |
+|---|---|
+| `4391d5a5e` | 主体无该 schema 字段白名单机制 |
+| `4e4bfa62b` | 主体用 `aspectRatio` 枚举，无 `params.size` 字段 |
+| `a8508e232` | 目标文件在主体中不存在（官方 3.x 新功能） |
+| `50bbc99bb` / `dfbe9a082` | 主体无 `bettertext` 依赖 |
+
+### 移植池量化（长期依据）
+
+官方 1352 个改动文件中，**681 个在主体存在**（可移植），**671 个不存在**（3.x 新增）。
+其中「单文件 + 纯 fix + 文件存在」的 **30 个**是最安全移植池，本轮取 3 个。
