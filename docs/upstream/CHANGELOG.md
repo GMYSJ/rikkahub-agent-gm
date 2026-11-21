@@ -139,3 +139,79 @@
 此前 `AUDIT_REPORT.md` / 首轮 CHANGELOG 按 `git ls-tree` 统计为
 「277 个测试文件」，与实际的 **2030 个测试方法**不是同一口径。
 以报告数字为准，**测试文件数 ≠ 测试数**。
+---
+
+## 本轮（2026-11-22）第三轮：验收与覆盖安装策略修正
+
+### run #43 — 成功（[链接](https://github.com/GMYSJ/rikkahub-agent-gm/actions/runs/44949152788)）
+
+commit `6f88907`，20 步全 success，产物 `RikkaHub-run43-arm64` 50.17 MB。
+
+| 模块 | tests | failures |
+|---|---|---|
+| `ai`  | 308  | 0 |
+| `app` | 1723 | 0 |
+| **合计** | **2031** | **0** |
+
+新增的 `ModelRegistryTest.testMagnitudeNotVersion` 确认执行（ai 308，比 #41 多 1 例）。
+三个关键测试均在报告索引中：`ModelRegistryTest` / `McpToolSchemaTest` /
+`ChatCompletionsStreamDecoderNullTest`。
+
+### run #44 — 成功（[链接](https://github.com/GMYSJ/rikkahub-agent-gm/actions/runs/44951448987)）
+
+commit `738ad14`，23 步全 success。
+
+关键验收点（新增守卫）：
+
+`
+Verify versionCode stays fixed (bidirectional overwrite-install) -> success
+versionCode=190 versionName=2.5.1-agent.4 (expected 190)
+applicationId=excp.rikkahub.agent
+release.keystore present (fixed signing key)
+`
+
+产物与构建摘要：
+
+`
+APK=RikkaHub-2.5.1-agent.4-arm64-v8a.apk
+SIZE=55701989
+SHA256=ab1f8d183b24df66e97ba9490189ff39df6b4e68a6fcbd561905e4e549a2f2ba
+BUILD SUCCESSFUL in 17m 30s
+`
+
+测试同样 2031 例全过。
+
+### 覆盖安装策略修正（重要，曾写错）
+
+**上一轮的错误**：把 versionCode 设成 `run_number + 190` 自动递增。
+
+**为什么错**：递增只保证"新能覆盖旧"，却让"旧无法覆盖新"：
+
+`
+装 #38(190) -> 装 #43(233) 成功
+#43 出 bug  -> 装回 #38(190) 被拒（190 < 233）-> 必须卸载 -> 工作区数据丢失
+`
+
+工作区数据有数 GB，这正是用户明确要求避免的场景。
+
+**修正为固定 190**：
+
+| 版本关系 | 覆盖安装 |
+|---|---|
+| 更大 | ✅ |
+| **相等** | ✅ **（双向，可回退）** |
+| 更小 | ❌ |
+
+任意两个历史包 versionCode 相同 => 任意方向互相覆盖都合法。
+版本区分改用 SHA-256 + artifact 名 + commit SHA（均写入 Step Summary）。
+
+**已核实的三项固定值**：
+
+| 项 | #38（用户当前安装） | #43 / #44 | 结论 |
+|---|---|---|---|
+| applicationId（release） | `excp.rikkahub.agent` | 同 | 一致 |
+| `release.keystore` blob | `7629852...` | 同 | 同一把钥匙 |
+| versionCode | `190` | 同 | 双向可覆盖 |
+
+守卫已加入 workflow：versionCode 被改动或 keystore 丢失时构建直接失败，
+不会产出无法覆盖的包。详见 `OVERWRITE_INSTALL.md`。
