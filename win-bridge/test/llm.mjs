@@ -20,6 +20,7 @@ import {
   MAX_FORWARDED_TOOLS,
   MIN_MAX_TOKENS,
   friendlyLlmError,
+  degradeImageBlocks,
 } from '../lib/llm.js';
 
 let passed = 0;
@@ -426,6 +427,31 @@ test('【回归】max_tokens 过小时抬到安全下限（防推理吃光预算
   });
   assert.equal(big.options.maxTokens, 8192);
   assert.equal(big.adjustedMaxTokens, null);
+});
+test('【回归】image_url 块降级成文字占位（防请求体膨胀 + DSH 不认该类型）', () => {
+  const bigB64 = 'A'.repeat(2_000_000);
+  const r = openAiRequestToGenerateOptions({
+    model: 'm',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: '看图' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${bigB64}` } },
+      ],
+    }],
+  });
+  assert.equal(r.ok, true);
+  const blocks = r.options.messages[0].content;
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].type, 'text');
+  assert.equal(blocks[1].type, 'text', 'image_url 必须转成 text，不能透传');
+  assert.match(blocks[1].text, /图片/);
+  assert.ok(blocks[1].text.length < 200, '占位文本必须短，不能带上 base64');
+});
+test('degradeImageBlocks 不动普通文本块', () => {
+  const out = degradeImageBlocks([{ type: 'text', text: 'hello' }]);
+  assert.equal(out[0].type, 'text');
+  assert.equal(out[0].text, 'hello');
 });
 test('truncateContentBlocks 不动短文本与非文本块', () => {
   const blocks = [

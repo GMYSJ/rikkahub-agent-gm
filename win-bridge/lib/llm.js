@@ -344,6 +344,39 @@ export function normalizeUsage(usage) {
 }
 
 /**
+ * 把 OpenAI 风格的 image_url 内容块降级成文字占位。
+ *
+ * 为什么必须做：DSH 的 `ImageBlock` 是 `{type:'image', attachment: ImageAttachmentRef}`
+ * （dsh-llm/src/types.ts:86-89），需要 attachment service 的引用，
+ * 桥无法凭空构造。直接透传 `{type:'image_url', image_url:{url}}` 会让
+ * DSH 适配器读到不认识的块类型。
+ *
+ * 而且图片 base64 会把请求体撑到几 MB —— 实测正常长对话已 326 KB，
+ * 多一张 1164×2560 的截图就超过旧上限 512 KB，导致 413。
+ *
+ * 降级策略：换成 "[图片: <大小>]" 文本，既保留"这里原本有图"的语义，
+ * 又不让请求体爆炸。模型会被告知看不到图，可以自然地请用户描述。
+ *
+ * @param {Array<object>} blocks - 原始内容块数组。
+ * @returns {Array<object>} 降级后的内容块数组。
+ */
+export function degradeImageBlocks(blocks) {
+  if (!Array.isArray(blocks)) return blocks;
+  return blocks.map((b) => {
+    if (b === null || typeof b !== 'object') return b;
+    const type = String(b.type ?? '');
+    if (type !== 'image_url' && type !== 'image') return b;
+    const url = type === 'image_url'
+      ? (b.image_url?.url ?? b.image_url ?? '')
+      : '';
+    const sizeHint = typeof url === 'string' && url.startsWith('data:')
+      ? `base64 约 ${Math.round(url.length / 1024)} KB`
+      : (typeof url === 'string' && url !== '' ? '远程图片' : '未知');
+    return { type: 'text', text: `[图片：${sizeHint}；当前通道不传递图片内容，如需判断请让用户用文字描述]` };
+  });
+}
+
+/**
  * 把 OpenAI chat/completions 请求体转成 DSH `GenerateOptions`。
  *
  * 支持的字段：model / messages / temperature / max_tokens / tools / stream / signal。
@@ -392,7 +425,9 @@ export function openAiRequestToGenerateOptions(body) {
     if (typeof rawContent === 'string') {
       contentBlocks = [{ type: 'text', text: rawContent }];
     } else if (Array.isArray(rawContent)) {
-      contentBlocks = rawContent;
+      // 数组可能混有 image_url 块：DSH 不认这个类型（它的 ImageBlock 需要
+      // attachment 引用），而且 base64 图片会把请求体撑爆。统一降级成文字。
+      contentBlocks = degradeImageBlocks(rawContent);
     } else {
       contentBlocks = [{ type: 'text', text: JSON.stringify(rawContent ?? '') }];
     }

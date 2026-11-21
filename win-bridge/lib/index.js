@@ -96,8 +96,18 @@ export const name = 'dsh-mobile-bridge';
  */
 export const inject = ['webServer', 'tools', 'llm'];
 
-/** 响应体上限，防止对端一上来就灌爆内存。 */
-const MAX_BODY_BYTES = 512 * 1024;
+/**
+ * 请求体上限，防止对端一上来就灌爆内存。
+ *
+ * 但**不能太小**：手机侧模型若开启「图片输入」，历史里的截图会以
+ * base64 打进请求，单张 1164×2560 的截图 base64 后就有 1~3 MB。
+ * 实测一个正常长对话本身已 326 KB，再加一张图就会超过旧上限 512 KB，
+ * 于是桥回 413、客户端只看到 "unexpected end of stream"
+ * （而且 413 分支在更早的代码路径上，不写 LLM 诊断，极难排查）。
+ *
+ * 32 MB 足够容纳多张截图的上下文，同时仍是有限值。
+ */
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
 /**
  * 动态取 `defineTool`：宿主里有就用真的（带 schema 校验），
@@ -724,6 +734,18 @@ export function apply(ctx, config) {
 
         const body = await readBody(req, MAX_BODY_BYTES);
         if (!body.ok) {
+          // 这条分支在 LLM 处理之前，必须显式记录，
+          // 否则客户端只看到 "unexpected end of stream"，诊断里一片空白
+          // （实测：图片把请求体撑到上限导致的 413 就是这么被漏掉的）。
+          lastLlmError = {
+            at: new Date().toISOString(),
+            model: '(unknown)',
+            raw: `request body rejected: ${body.reason}`,
+            name: 'PayloadTooLarge',
+            friendly: `请求体过大（上限 ${Math.round(MAX_BODY_BYTES / 1024 / 1024)} MB），已在读取阶段拒绝`,
+            clientAborted: false,
+            progress: null,
+          };
           sendJson(res, 413, errorEnvelope(ERROR_CODE.PAYLOAD_TOO_LARGE, body.reason));
           return;
         }
