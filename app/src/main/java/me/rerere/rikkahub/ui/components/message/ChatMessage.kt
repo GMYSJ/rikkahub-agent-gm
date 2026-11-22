@@ -437,8 +437,13 @@ private fun MessagePartsBlock(
                                         scope = AssistantAffectScope.ASSISTANT,
                                         visual = true,
                                     )
-                                    val paragraphs = remember(content) {
-                                        splitMarkdownParagraphs(content).ifEmpty { listOf(content) }
+                                    val splitByParagraph = settings.displaySetting.splitAssistantBubbleByParagraph
+                                    val paragraphs = remember(content, splitByParagraph) {
+                                        if (splitByParagraph) {
+                                            splitMarkdownParagraphs(content).ifEmpty { listOf(content) }
+                                        } else {
+                                            listOf(content)
+                                        }
                                     }
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         paragraphs.fastForEachIndexed { index, paragraph ->

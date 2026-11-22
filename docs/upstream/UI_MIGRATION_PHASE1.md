@@ -158,3 +158,47 @@ DeepSeek 迁移依赖官方 3.x 对 `Conversation` 新增的 `config` 字段
 | 回滚点 | `backup/pre-uimigration-35e713e` tag |
 | 集成分支 HEAD | `1874032`（未动） |
 | 本地未推提交 | `35e713e78` fix(favorite)（按要求保留，未推送） |
+---
+
+## 追加：助手回复按段落拆气泡（官方 3.3.0，CI #49 后追加）
+
+| 项 | 内容 |
+|---|---|
+| 官方来源 | 2435dbdf4（3.3.0 引入，3.3.1 保留） |
+| 新增文件 | ui/components/message/MarkdownParagraphs.kt（Markdown 感知分段函数） |
+| 修改文件 | ChatMessage.kt：助手气泡分支按段落拆成多个气泡 |
+| 用户可见变化 | 助手较长回复按段落分多个气泡显示；代码块/公式不会被切断 |
+| 数据兼容 | **未新增 DataStore 字段**（官方用 splitAssistantBubbleByParagraph 开关，主体无此字段；直接启用拆分，不改用户配置结构） |
+| 提交 | 83dfc23d6 |
+| CI | #50（进行中，见最新结果） |
+
+此项与快速入门页同属第一阶段 UI 体验迁移，均为纯 UI 层改动，
+未触碰 Agent/工具/设备自动化/Shizuku/Workflow/Telegram/Workspace/MCP/Doctor/HARDLINE/远程节点。
+---
+
+## 待迁移功能登记：DeepSeek QuickStart（不得放弃）
+
+| 项 | 内容 |
+|---|---|
+| 功能 | 快速入门页的「从 DeepSeek 迁移」标签 |
+| 官方来源 | 2435dbdf4（3.3.1） |
+| 涉及文件 | ui/pages/quickstart/QuickStartDeepSeekTab.kt、data/sync/importer/DeepSeekMigrator.kt、DeepSeekImporter.kt、data/model/ConversationConfig.kt |
+| 当前状态 | **未迁移**（本阶段只迁了通用配置标签） |
+| 阻塞原因 | 依赖官方 3.x 给 Conversation 新增的 config 字段；主体 2.5.1 数据模型与数据库无此字段，硬搬会导致 ConversationConfig.kt 十余处 Unresolved reference |
+| 后续计划 | 单独阶段研究 Conversation.config 数据结构、Room Migration 与旧数据兼容方案；验证通过后再迁移该标签。**不允许直接放弃** |
+| 风险 | 数据结构变更涉及全部旧会话，必须先备份 + 幂等迁移 + 回滚测试 |
+
+---
+
+## 拆气泡开关修正（用户要求）
+
+用户要求：不要永久改变所有用户的默认显示行为。
+
+处理：
+- DisplaySetting 新增独立字段 splitAssistantBubbleByParagraph: Boolean = false
+  （@Serializable data class 存单个 DataStore key，旧配置反序列化自动用默认值 **false**）
+- ChatMessage 按官方逻辑读取该开关；默认关闭时保持原来的单气泡
+- 设置页在「显示助手气泡」开启时，显示「按段落拆分气泡」开关
+- 默认行为与迁移前完全一致，老用户无感
+
+这也满足官方设计：官方同名字段默认值同为 alse。

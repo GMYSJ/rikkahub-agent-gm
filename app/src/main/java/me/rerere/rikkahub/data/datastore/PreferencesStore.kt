@@ -1006,6 +1006,8 @@ data class DisplaySetting(
     val useAppIconStyleLoadingIndicator: Boolean = true,
     val showUserAvatar: Boolean = true,
     val showAssistantBubble: Boolean = false,
+    // 助手回复按段落拆分为多个气泡（默认关闭，不改变现有用户显示行为）
+    val splitAssistantBubbleByParagraph: Boolean = false,
     val bubbleOpacity: Float = 1.0f,
     val showModelIcon: Boolean = true,
     val showModelName: Boolean = true,

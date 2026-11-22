@@ -2590,4 +2590,6 @@
   <string name="quick_start_page_tts_desc">Read AI replies aloud. The system TTS is used by default. You can also set up online voices such as OpenAI, Gemini or MiniMax for more natural speech.</string>
   <string name="quick_start_page_tts_title">Text-to-speech (TTS)</string>
   <string name="quick_start_page_unnamed">Unnamed</string>
+  <string name="setting_display_page_split_assistant_bubble_title">Split bubbles by paragraph</string>
+  <string name="setting_display_page_split_assistant_bubble_desc">Show each paragraph of an assistant reply in its own bubble</string>
 </resources>
