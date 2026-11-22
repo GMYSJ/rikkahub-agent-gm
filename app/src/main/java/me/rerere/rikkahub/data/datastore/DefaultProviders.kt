@@ -477,6 +477,28 @@ val DEFAULT_PROVIDERS = listOf(
     // promptCaching defaults true on ProviderSetting.Claude but Minimax docs
     // make no mention of cache_control support; default off to avoid sending
     // headers Minimax may reject. User can flip it on if/when they confirm.
+    ProviderSetting.OpenAI(
+        id = Uuid.parse("3de58b04-7ac6-4f25-8880-2e2638aeb1d6"),
+        name = "STA1N API",
+        baseUrl = "https://sta1n.ai/v1",
+        apiKey = "",
+        enabled = false,
+        builtIn = true,
+        description = {
+            Text(
+                text = buildAnnotatedString {
+                    append("主要为 RP 玩家服务的站点")
+                    appendLine()
+                    append("官网：")
+                    withLink(LinkAnnotation.Url("https://sta1n.ai")) {
+                        withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
+                            append("https://sta1n.ai")
+                        }
+                    }
+                }
+            )
+        },
+    ),
     ProviderSetting.Claude(
         id = Uuid.parse("b55716c7-e465-4666-a788-4243aab13fb3"),
         name = "MiniMax",
