@@ -746,6 +746,7 @@ private fun QuickMessageButton(
     state: ChatInputState,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val hapticFeedback = LocalHapticFeedback.current
     IconButton(
         onClick = {
             expanded = !expanded
@@ -759,12 +760,20 @@ private fun QuickMessageButton(
         ) {
             quickMessages.forEach { quickMessage ->
                 Surface(
-                    onClick = {
-                        state.appendText(quickMessage.content)
-                        expanded = false
-                    },
                     color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = {
+                                state.appendText(quickMessage.content)
+                                expanded = false
+                            },
+                            onLongClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.setMessageText(quickMessage.content)
+                                expanded = false
+                            },
+                        ),
                 ) {
                     Column(
                         modifier = Modifier.padding(8.dp)
