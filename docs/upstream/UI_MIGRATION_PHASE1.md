@@ -431,3 +431,18 @@ A 级以 CI 为准，B/C 未做。
 提交 `2df48bee6`（7 行新增，3 行删除）。A 级以 CI 为准，B/C 未做。
 
 **CI #61 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run61-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：模型列表支持手动刷新（CI #62 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `88a11a3b2` | 模型选择弹窗加刷新按钮 | 服务商设置里点刷新可重新拉取最新模型列表，不用重进页面 |
+
+主体适配：用现有 List<Model> + CancellationException 容错机制，
+不引入官方 RemoteModels data class（降低风险）；刷新用 refreshCount 触发 produceState。
+
+提交 `5a91eda9a`（19 行新增，4 行删除）。A 级以 CI 为准，B/C 未做。
+
+**CI #62 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run62-arm64` 50.18MB。A 级通过，B/C 未做。
