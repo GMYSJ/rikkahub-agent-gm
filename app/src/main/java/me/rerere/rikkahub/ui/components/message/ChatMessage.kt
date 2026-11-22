@@ -429,20 +429,33 @@ private fun MessagePartsBlock(
                                 }
                             } else {
                                 if (settings.displaySetting.showAssistantBubble) {
-                                    Surface(
-                                        modifier = Modifier.animateContentSize(),
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
-                                    ) {
-                                        Column(modifier = Modifier.padding(8.dp)) {
-                                            MarkdownBlock(
-                                                content = part.text.replaceRegexes(
-                                                    assistant = assistant,
-                                                    scope = AssistantAffectScope.ASSISTANT,
-                                                    visual = true,
-                                                ),
-                                                onClickCitation = handleClickCitation,
-                                            )
+                                    // 官方 3.3.0：助手回复按段落拆分为多个气泡。
+                                    // 使用 Markdown 感知的分段（代码块/公式不拆），避免把一个
+                                    // 代码块或公式切成两半导致渲染错乱。
+                                    val content = part.text.replaceRegexes(
+                                        assistant = assistant,
+                                        scope = AssistantAffectScope.ASSISTANT,
+                                        visual = true,
+                                    )
+                                    val paragraphs = remember(content) {
+                                        splitMarkdownParagraphs(content).ifEmpty { listOf(content) }
+                                    }
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        paragraphs.fastForEachIndexed { index, paragraph ->
+                                            key(index) {
+                                                Surface(
+                                                    modifier = Modifier.animateContentSize(),
+                                                    shape = RoundedCornerShape(16.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = settings.displaySetting.bubbleOpacity),
+                                                ) {
+                                                    Column(modifier = Modifier.padding(8.dp)) {
+                                                        MarkdownBlock(
+                                                            content = paragraph,
+                                                            onClickCitation = handleClickCitation,
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
