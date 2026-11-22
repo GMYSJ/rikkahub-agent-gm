@@ -1115,7 +1115,7 @@ private fun AnnotatedString.Builder.appendMarkdownNodeContent(
                                             lineHeight = 10.sp,
                                             fontFamily = JetbrainsMono,
                                             color = colorScheme.onTertiaryContainer,
-                                            fontWeight = FontWeight.Thin
+                                            fontWeight = FontWeight.Medium
                                         ),
                                     )
                                 }

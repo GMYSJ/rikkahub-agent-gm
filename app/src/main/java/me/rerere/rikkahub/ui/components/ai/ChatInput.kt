@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,6 +59,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -205,8 +209,19 @@ fun ChatInput(
         }
     }
 
+    // 底部渐变遮罩：避免消息从系统导航栏/键盘后透出（官方 3.x）
+    val scrimColor = MaterialTheme.colorScheme.background
+    val imeInsets = WindowInsets.ime
     Surface(
         color = Color.Transparent,
+        modifier = Modifier.drawWithCache {
+            val brush = Brush.verticalGradient(
+                colors = listOf(scrimColor.copy(alpha = 0f), scrimColor),
+                startY = 0f,
+                endY = (size.height - imeInsets.getBottom(this)).coerceAtLeast(1f),
+            )
+            onDrawBehind { drawRect(brush) }
+        },
     ) {
         Column(
             modifier = modifier
