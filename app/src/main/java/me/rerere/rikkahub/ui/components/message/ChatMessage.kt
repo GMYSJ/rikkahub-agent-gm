@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.components.message
 
 import android.content.Intent
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
@@ -50,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastAll
@@ -573,6 +575,9 @@ private fun MessagePartsBlock(
                     }
 
                     is UIMessagePart.Document -> {
+                        // 官方 3.x：附件胶囊按压时圆角收缩反馈
+                        val docInteraction = remember { MutableInteractionSource() }
+                        val docPress by animatePressProgress(docInteraction)
                         Surface(
                             tonalElevation = 2.dp,
                             onClick = {
@@ -586,8 +591,9 @@ private fun MessagePartsBlock(
                                 val chooserIndent = Intent.createChooser(intent, null)
                                 context.startActivity(chooserIndent)
                             },
+                            interactionSource = docInteraction,
                             modifier = Modifier,
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(lerp(50, 30, docPress).coerceIn(0, 50)),
                             color = MaterialTheme.colorScheme.tertiaryContainer
                         ) {
                             ProvideTextStyle(MaterialTheme.typography.labelSmall) {

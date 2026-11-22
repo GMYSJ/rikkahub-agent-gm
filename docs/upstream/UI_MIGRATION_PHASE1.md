@@ -202,3 +202,23 @@ DeepSeek 迁移依赖官方 3.x 对 `Conversation` 新增的 `config` 字段
 - 默认行为与迁移前完全一致，老用户无感
 
 这也满足官方设计：官方同名字段默认值同为 alse。
+---
+
+## 追加：聊天附件按压反馈（官方 3.x，待 CI 验收）
+
+| 项 | 内容 |
+|---|---|
+| 官方来源 | 2435dbdf4（3.3.1） |
+| 新增文件 | ui/components/message/ChatMessageAttachments.kt（自包含组件：animatePressProgress / ChatMessageMediaTile / ChatMessageFileChip / openLocalFile） |
+| 修改文件 | ChatMessage.kt：文档附件胶囊接入 nimatePressProgress，按压时圆角由 50 收缩到 30 |
+| 用户可见变化 | 点击聊天中的文档附件时，胶囊有圆角收缩的按压反馈 |
+| 提交前自检 | 无 UTF-16、符号齐全、import 完整、覆盖安装守卫在、GMYSJ 资产完好 |
+
+**未迁移项登记（不得放弃）：**
+
+| 功能 | 原因 | 后续 |
+|---|---|---|
+| ChatMessageNotices.kt（消息通知条展示） | 依赖主体缺失的 UIMessagePart.Notice 数据类型 | 与 Conversation.config 一样，属于数据模型层改造，单独阶段评估旧数据兼容后迁移 |
+
+说明：主体 ChatMessage 已有等价的图片/文档渲染，因此未整体替换官方附件组件，
+只迁移按压反馈这一低风险、可见的改进；其余组件作为可复用基础已就位。
