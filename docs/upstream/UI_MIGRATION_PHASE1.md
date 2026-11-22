@@ -510,3 +510,16 @@ A 级以 CI 为准，B/C 未做。
 提交 `27e9fce7c`（12 行新增，9 行删除）。A 级以 CI 为准，B/C 未做。
 
 **CI #67 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run67-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：Response API 工具关闭 strict（CI #68 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `a6dbb8cd2` | 函数工具显式 `strict=false` | 用 Responses API 的服务商调用工具时，可选参数不再被强制填默认值，减少工具参数校验失败 |
+
+含官方单测（验证 strict=false 写入请求体）。提交 `dc262ea22`（15 行新增）。
+A 级以 CI 为准，B/C 未做。
+
+**CI #68 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run68-arm64` 50.18MB。A 级通过，B/C 未做。
