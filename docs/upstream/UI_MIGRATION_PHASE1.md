@@ -322,3 +322,45 @@ memory_consolidation / memory_file / 	ranslation_history / usage_record
 4. 全部通过后才接 UI 与 Provider 设置
 
 在此之前，媒体创作功能保持「引擎已就位、不可见」状态，不得宣称可用。
+
+---
+
+## 媒体创作完整接入尝试：最终结论（2026-11-22）
+
+上一节「手写 Migration 方案」是中间过程。这里记录最终结论。
+
+### 尝试过程
+
+| run | 结果 | 失败根因（逐轮读取完整日志） |
+|---|---|---|
+| #53 | failure | AutoMigration 缺 32/33 schema JSON；且双方 schema 早已分叉 |
+| #54 | failure | app 模块看不到 `:mediagen` 类（509 错误同一根因） |
+| #55 | failure | 34 个缺失符号：设置页定义文件、StringUtils/常量未搬 |
+| #56 | failure | 39 个符号：setting_media_* 字符串、路由、S3 字段差异 |
+| #57 | failure | 错误不再收敛，集中在**两个系统性不兼容**：Toast 体系（主体 `com.dokar.sonner` vs 官方 `me.rerere.ui.toast`）与 Settings 数据模型（`mediaGenerationProviders`/`uploadS3Config`/`MEDIA_CREATION` 主体均无） |
+
+### 最终决定
+
+完整尝试已冻结在 tag `backup/mediacreation-fullattempt-b114e08`（含全部代码与 5 轮 CI 分析）。
+分支已回到 `0a7f6c8ed`（#52 后的已验证状态）。
+
+**理由**：媒体创作 UI 依赖 3.x 的 Toast 组件体系与 Settings 数据模型整体改造。
+这不是"补几个文件"能收敛的——每轮 CI 都暴露新的系统性差异，第 5 轮错误已不再下降。
+继续硬改会触碰用户设置数据结构，违反「不破坏用户数据」红线，
+且本机无真机无法做 C 级验证。
+
+### 当前可用功能（均已 A 级验收）
+
+| run | 内容 |
+|---|---|
+| #49 | 快速入门页 |
+| #51 | 拆气泡开关（默认关）+ 附件按压反馈 |
+| #52 | MediaGen 引擎（代码就位，用户不可见） |
+
+### MediaGen 引擎为何不可见
+
+引擎层（5 家 Provider 的图片/视频生成）已编译通过，
+但缺 app 侧 UI 与 Provider 设置；其依赖的 3.x Toast/Settings 体系
+与主体不兼容，需独立阶段做「组件体系 + 数据模型适配」，
+并配 C 级验证后才能安全接入。**不得宣称媒体创作已可用。**
+
