@@ -178,4 +178,18 @@ class ModelRegistryTest {
         }
         assertEquals(null, defaultModel.contextLength)
     }
+
+    @Test
+    fun testClaude55() {
+        val visionInput = listOf(Modality.TEXT, Modality.IMAGE)
+        val toolReasoning = listOf(ModelAbility.TOOL, ModelAbility.REASONING)
+        assertTrue(ModelRegistry.CLAUDE_SERIES.match("claude-sonnet-5-5"))
+        assertTrue(ModelRegistry.CLAUDE_SERIES.match("claude-opus-5-5"))
+        assertTrue(ModelRegistry.CLAUDE_SERIES.match("claude-opus-5.5"))
+        assertEquals(visionInput, ModelRegistry.MODEL_INPUT_MODALITIES.getData("claude-sonnet-5-5"))
+        assertEquals(visionInput, ModelRegistry.MODEL_INPUT_MODALITIES.getData("claude-opus-5-5"))
+        assertEquals(toolReasoning, ModelRegistry.MODEL_ABILITIES.getData("claude-sonnet-5-5"))
+        assertEquals(toolReasoning, ModelRegistry.MODEL_ABILITIES.getData("claude-opus-5-5"))
+    }
+
 }

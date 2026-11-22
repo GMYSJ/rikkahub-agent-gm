@@ -255,6 +255,23 @@ object ModelRegistry {
         contextLength(1.m)
     }
 
+    // 官方 3443dd455：Claude Opus/Sonnet 5.5（增量添加，保留 3.5/3.7 以兼容旧配置）
+    private val CLAUDE_SONNET_5_5 = defineModel {
+        tokens("claude", "sonnet", "5", "5")
+        notTokens("claude", "sonnet", "4")
+        visionInput()
+        toolReasoningAbility()
+        contextLength(1.m)
+    }
+
+    private val CLAUDE_OPUS_5_5 = defineModel {
+        tokens("claude", "opus", "5", "5")
+        notTokens("claude", "opus", "4")
+        visionInput()
+        toolReasoningAbility()
+        contextLength(1.m)
+    }
+
     val CLAUDE_SERIES = defineGroup {
         add(
             CLAUDE_SONNET_3_5,
@@ -266,7 +283,9 @@ object ModelRegistry {
             CLAUDE_OPUS_4_7,
             CLAUDE_OPUS_4_8,
             CLAUDE_SONNET_5,
-            CLAUDE_OPUS_5
+            CLAUDE_OPUS_5,
+            CLAUDE_SONNET_5_5,
+            CLAUDE_OPUS_5_5
         )
     }
 
