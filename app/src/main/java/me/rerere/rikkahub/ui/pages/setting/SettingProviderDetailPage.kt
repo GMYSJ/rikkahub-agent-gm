@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.pages.setting
 
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Package01
+import me.rerere.hugeicons.stroke.Refresh01
 import me.rerere.hugeicons.stroke.Connect
 import me.rerere.hugeicons.stroke.ArrowDown01
 import me.rerere.hugeicons.stroke.Add01
@@ -72,6 +73,7 @@ import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -137,6 +139,7 @@ import org.koin.compose.koinInject
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.CancellationException
 
 @Composable
 fun SettingProviderDetailPage(id: Uuid, vm: SettingVM = koinViewModel()) {
@@ -458,10 +461,13 @@ private fun ModelList(
 ) {
     val providerManager = koinInject<ProviderManager>()
     val toaster = LocalToaster.current
-    val modelList by produceState(emptyList(), providerSetting) {
+    // 手动刷新：去掉 models 避免编辑后列表中重复；刷新时重新拉取远端模型
+    val listKey = remember(providerSetting) { providerSetting.copyProvider(models = emptyList()) }
+    var refreshCount by remember { mutableIntStateOf(0) }
+    val modelList: List<Model> by produceState(emptyList(), listKey, refreshCount) {
         runCatching {
-            value = providerManager.getProviderByType(providerSetting)
-                .listModels(providerSetting)
+            value = providerManager.getProviderByType(listKey)
+                .listModels(listKey)
                 .sortedBy { it.modelId }
                 .toList()
         }.onFailure { error ->
@@ -560,6 +566,7 @@ private fun ModelList(
         ) {
             AddModelButton(
                 models = modelList,
+                onRefresh = { refreshCount++ },
                 selectedModels = providerSetting.models,
                 onAddModel = {
                     onUpdateProvider(providerSetting.addModel(it))
@@ -759,6 +766,7 @@ private fun ModelSettingsForm(
 @Composable
 private fun AddModelButton(
     models: List<Model>,
+    onRefresh: () -> Unit,
     selectedModels: List<Model>,
     expanded: Boolean,
     onAddModel: (Model) -> Unit,
@@ -777,6 +785,7 @@ private fun AddModelButton(
     ) {
         ModelPicker(
             models = models,
+            onRefresh = onRefresh,
             selectedModels = selectedModels,
             onModelSelected = { model ->
                 onAddModel(model.enrichCapabilities())
@@ -907,6 +916,7 @@ private fun AddModelButton(
 @Composable
 private fun ModelPicker(
     models: List<Model>,
+    onRefresh: () -> Unit,
     selectedModels: List<Model>,
     onModelSelected: (Model) -> Unit,
     onModelDeselected: (Model) -> Unit,
@@ -949,8 +959,13 @@ private fun ModelPicker(
                 ) {
                     Text(
                         text = stringResource(R.string.setting_provider_page_avaliable_models),
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
                     )
+
+                    IconButton(onClick = onRefresh) {
+                        Icon(HugeIcons.Refresh01, contentDescription = "Refresh")
+                    }
 
                     val unselectedCount = filteredModels.count { model ->
                         selectedModels.none { it.modelId == model.modelId }
