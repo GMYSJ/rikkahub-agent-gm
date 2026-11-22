@@ -566,7 +566,7 @@ A 级以 CI 为准，B/C 未做。
 
 ---
 
-## 重大功能簇：DeepSeek 聊天记录导入（官方 3.3.0，CI #72 验收中）
+## 重大功能簇：DeepSeek 聊天记录导入（官方 3.3.0，CI #73 已验收成功）
 
 追赶目标：官方 3.3.1（DeepSeek 导入来自 3.3.0 Release Notes）
 
@@ -584,3 +584,6 @@ A 级以 CI 为准，B/C 未做。
 提交 `d35f7762f`（962 行新增，15 行删除；已修正 strings.xml CRLF 污染）。
 A 级以 CI 为准，B/C 未做。
 
+**CI #73 结果**：success，23 步全绿，2031+ 测试通过（含新增 DeepSeekImporterTest），APK `RikkaHub-run73-arm64` 50.21MB。A 级通过，B/C 未做。
+
+**CI #72 失败记录**：QuickStartPage.kt 一处 `dp(16)` 误写（脚本替换残留），单日志定位、单处修复，#73 通过。
