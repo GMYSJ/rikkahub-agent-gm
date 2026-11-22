@@ -588,7 +588,7 @@ class ChatService(
                 onIdle = { removeSession(it) },
                 onGenerationFinished = { id, cause ->
                     val session = sessions[id]
-                    if (cause != null) session?.messageQueue?.pause()
+                    if (cause != null && cause !is kotlinx.coroutines.CancellationException) session?.messageQueue?.pause()
                     if (session?.state?.value?.currentMessages?.any { message ->
                             message.parts.any { it is UIMessagePart.Tool && it.isPending }
                         } == true) {
