@@ -380,3 +380,20 @@ memory_consolidation / memory_file / 	ranslation_history / usage_record
 本机无 Java/Gradle，A 级以 CI 为准；B/C 级未做。
 
 **CI #58 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run58-arm64` 50.18MB，versionCode 守卫 success。A 级通过；B/C 级未做。
+
+---
+
+## 追加：两个稳定性修复（CI #59 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `281c9525a` | 用户主动取消生成不再 pause 消息队列 | 「停止后立即发新消息」不再卡在暂停队列 |
+| `2cd6acac2` | 移除更新下载的网络类型限制 | 开 VPN 时应用内更新包能下载了 |
+
+主体适配：ChatService 用 `session?.messageQueue?.pause()`（安全调用），按等价语义加
+CancellationException 判断。`4ed5f38d9`（移动会话竞态）主体结构不同，不适用，未套用。
+
+提交 `7f057498f`（1 行新增，2 行删除），提交前自检通过。
+本机无 Java/Gradle，A 级以 CI 为准；B/C 级未做。
+
+**CI #59 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run59-arm64` 50.18MB。A 级通过，B/C 未做。
