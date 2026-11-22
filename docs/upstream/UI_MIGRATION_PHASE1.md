@@ -563,3 +563,24 @@ A 级以 CI 为准，B/C 未做。
 提交 `d48b1ecc4`（26 行新增，2 行删除）。A 级以 CI 为准，B/C 未做。
 
 **CI #71 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run71-arm64` 50.19MB。A 级通过，B/C 未做。
+
+---
+
+## 重大功能簇：DeepSeek 聊天记录导入（官方 3.3.0，CI #72 验收中）
+
+追赶目标：官方 3.3.1（DeepSeek 导入来自 3.3.0 Release Notes）
+
+完整闭环：
+- QuickStart 第二标签「从 DeepSeek 迁移」：3 步引导 + 导入结果统计 + 可选 API 配置
+- 备份页「导入导出」新增 DeepSeek ZIP 导入入口（老用户可用）
+- 后端：DeepSeekImporter（解析 ZIP/消息/附件）+ DeepSeekMigrator（入库）
+- DI 注册 + 官方单测（DeepSeekImporterTest 320 行）
+
+主体兼容适配（不碰用户数据 schema）：
+- 去掉官方 bindConfig/Conversation.config 依赖（主体 Conversation 无 config 字段）
+- awaitLoaded -> settingsFlow.value；ProviderSetting.ApiKey -> OpenAI；openUrl -> Intent
+- 保留全部 GMYSJ 核心能力，未删改任何既有功能
+
+提交 `d35f7762f`（962 行新增，15 行删除；已修正 strings.xml CRLF 污染）。
+A 级以 CI 为准，B/C 未做。
+

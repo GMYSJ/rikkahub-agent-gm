@@ -66,7 +66,7 @@ fun QuickStartPage(vm: QuickStartVM = koinViewModel()) {
                 pagerState = pagerState,
                 tabs = QuickStartTab.entries,
                 modifier = Modifier.padding(vertical = 4.dp),
-                contentPadding = PaddingValues(horizontal = androidx.compose.ui.unit.dp(16)),
+                contentPadding = PaddingValues(horizontal = 16.dp),
             )
 
             HorizontalPager(
