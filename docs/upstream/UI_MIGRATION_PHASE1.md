@@ -222,3 +222,25 @@ DeepSeek 迁移依赖官方 3.x 对 `Conversation` 新增的 `config` 字段
 
 说明：主体 ChatMessage 已有等价的图片/文档渲染，因此未整体替换官方附件组件，
 只迁移按压反馈这一低风险、可见的改进；其余组件作为可复用基础已就位。
+---
+
+## 验收记录更新（按构建版本区分）
+
+| run | commit | 内容 | 结果 |
+|---|---|---|---|
+| #49 | 8a2b3af | 快速入门页（无拆气泡） | ✅ success |
+| #50 | 83dfc23 | 拆气泡首次实现（无开关，永久启用） | ✅ success |
+| #51 | 3906f58 | 拆气泡独立开关（默认关闭）+ 附件按压反馈 | ✅ success |
+| #52 |  eb2ea1 | MediaGen 引擎模块 | 进行中 |
+
+**#49 / #50 / #51 是三个独立构建版本，不混用验收结论。**
+最终推荐版本：#51（拆气泡可开关，默认行为不变）。
+
+## 第二阶段进度：MediaGen 引擎已落地，UI 待接线
+
+- 已迁移：mediagen/ 全模块 35 文件（5 家 Provider 的图片/视频生成引擎）
+- settings.gradle 已 include :mediagen
+- **尚未产生用户可见功能**：缺 app 侧 MediaCreation UI 7 文件 + Provider 设置接线
+- UI 阻塞根因：依赖主体缺失的 MediaCreationRepository / MediaCreationService /
+  MediaCreationRecord / AppScope 等 3.x 数据层，需单独阶段评估
+- 已登记待迁移：DeepSeek QuickStart、ChatMessageNotices（均依赖主体缺失的数据模型）
