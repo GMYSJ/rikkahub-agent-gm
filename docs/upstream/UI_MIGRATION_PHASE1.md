@@ -397,3 +397,21 @@ CancellationException 判断。`4ed5f38d9`（移动会话竞态）主体结构�
 本机无 Java/Gradle，A 级以 CI 为准；B/C 级未做。
 
 **CI #59 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run59-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：日志页 JSON 长按闪退修复（CI #60 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `620e38ccb` | JSON 字符串加 SelectionContainer | 请求日志页长按 JSON 内容不再闪退 |
+
+官方根因：BottomSheet 内的 Text 无独立 SelectionContainer，长按时系统
+SelectionRegistrar 数量超限崩溃。主体 JsonTree.kt 此前缺此处理。
+
+提交 `84b507b19`（3 行新增）。同批评估但未套用（主体结构不同/已修）：
+MCP 空请求头、收藏页侧滑（已修）、fork 标题序号、加号面板、悬浮窗 FxControl。
+
+A 级以 CI 为准，B/C 未做。
+
+**CI #60 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run60-arm64` 50.18MB。A 级通过，B/C 未做。
