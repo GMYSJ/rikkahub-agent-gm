@@ -130,7 +130,12 @@ private fun ReasoningContent(
     loading: Boolean,
 ) {
     val isPreview = expandState == ReasoningCardState.Preview
-    val reasoningTextStyle = MaterialTheme.typography.bodySmall.copy(
+    // 思考内容正文跟随聊天字体大小设置缩放（官方 43d9e30e1）
+    val fontSizeRatio = LocalSettings.current.displaySetting.fontSizeRatio
+    val bodySmall = MaterialTheme.typography.bodySmall
+    val reasoningTextStyle = bodySmall.copy(
+        fontSize = bodySmall.fontSize * fontSizeRatio,
+        lineHeight = bodySmall.lineHeight * fontSizeRatio,
         fontFamily = LocalTextStyle.current.fontFamily,
     )
     Column(
