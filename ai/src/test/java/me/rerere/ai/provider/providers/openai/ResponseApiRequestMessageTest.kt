@@ -869,4 +869,16 @@ class ResponseApiRequestMessageTest {
             output = listOf(UIMessagePart.Text(output))
         )
     }
+
+    @Test
+    fun `function tools should disable strict mode so optional fields stay optional`() {
+        val requestBody = invokeBuildRequestBody(
+            providerSetting = ProviderSetting.OpenAI(baseUrl = "https://api.openai.com/v1"),
+            params = createToolParams(tools = listOf(createFunctionTool("get_weather")))
+        )
+
+        val tool = requestBody["tools"]!!.jsonArray[0].jsonObject
+        org.junit.Assert.assertEquals("false", tool["strict"]?.jsonPrimitive?.content)
+    }
+
 }
