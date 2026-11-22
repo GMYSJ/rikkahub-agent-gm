@@ -523,3 +523,16 @@ A 级以 CI 为准，B/C 未做。
 A 级以 CI 为准，B/C 未做。
 
 **CI #68 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run68-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：Responses API 工具 id 兜底（CI #69 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `5ac149b9b` | function_call item 缺 id 时用 call_id 兜底 | 部分兼容网关下工具调用不再因"chunk id not found"而丢失 |
+
+主体最小适配（加 itemIdOrCallId 扩展 + 2 处调用点）。
+提交 `e0cc67067`（7 行新增，2 行删除）。A 级以 CI 为准，B/C 未做。
+
+**CI #69 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run69-arm64` 50.18MB。A 级通过，B/C 未做。
