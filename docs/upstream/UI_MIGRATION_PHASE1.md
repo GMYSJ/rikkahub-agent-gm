@@ -276,3 +276,49 @@ DeepSeek 迁移依赖官方 3.x 对 `Conversation` 新增的 `config` 字段
 4. 具备 C 级验证条件（备份 + 真机/模拟器）后再接 UI 与 Provider 设置。
 
 **当前状态：MediaGen 引擎已就位但用户不可见；不得宣称图片/视频创作已可用。**
+---
+
+## ⚠️ 重要更正：数据库 schema 分叉（2026-11-22 实测，取代上文评估）
+
+上文「主体 31 升 34 只是加 3 张表」的判断是**错误的**，以本段为准。
+
+### 实测证据（读取双方 Room schema JSON）
+
+| 项 | 主体 31.json | 官方 31.json |
+|---|---|---|
+| 字节数 | 39535 | 31608 |
+| Entity 数 | **16** | **14** |
+
+**主体独有 9 张表**：MemoryEntity / gent_runs / conversation_compaction /
+scheduled_job_runs / scheduled_jobs / ssh_hosts / 	elegram_chats /
+workflow_runs / workflows
+
+**官方有而主体无 7 张表**：media_creation_node/record/session /
+memory_consolidation / memory_file / 	ranslation_history / usage_record
+
+**官方 31→34 的表变化**：30→31 只加 usage_record，31→32 / 32→33 / 33→34 **均无加表**。
+即官方的 media 表在更早版本就存在，主体则完全没有。
+
+### 结论
+
+双方数据库 schema 从很早就深度分叉。照搬官方 Migration_28_29/32_33 spec
+与 schema JSON 会把官方的 migration 应用到主体的不同表结构上，
+**可能导致用户数据错乱或应用启动崩溃**。这触碰「不丢工作区数据」红线。
+
+### 已采取措施
+
+- CI #53 因缺 32.json/33.json schema 失败（KSP AutoMigration 校验）
+- 已尝试补官方 schema，但发现与主体 31.json 不兼容
+- **已回退** db4a8999f（危险的数据库升级），保留 tag
+  ackup/pre-mediacreation-a3c6ae626 作为完整尝试记录
+- 分支已 reset 回 3c6ae626（#52 后的安全状态）
+
+### 后续（不得放弃，但需专门阶段）
+
+要让媒体创作真正可用，必须：
+1. 基于**主体的 31 schema** 手写 migration 加 media_creation 3 表（version 31→32）
+2. 用本机或 CI 生成主体自己的 32.json schema
+3. 在模拟器/真机上用**真实旧数据**验证迁移与回滚（C 级）
+4. 全部通过后才接 UI 与 Provider 设置
+
+在此之前，媒体创作功能保持「引擎已就位、不可见」状态，不得宣称可用。
