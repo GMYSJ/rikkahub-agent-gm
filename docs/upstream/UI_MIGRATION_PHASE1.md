@@ -587,3 +587,16 @@ A 级以 CI 为准，B/C 未做。
 **CI #73 结果**：success，23 步全绿，2031+ 测试通过（含新增 DeepSeekImporterTest），APK `RikkaHub-run73-arm64` 50.21MB。A 级通过，B/C 未做。
 
 **CI #72 失败记录**：QuickStartPage.kt 一处 `dp(16)` 误写（脚本替换残留），单日志定位、单处修复，#73 通过。
+
+---
+
+## 真机反馈修复：补齐 QuickStart/DeepSeek 中文翻译（CI #74 已验收成功）
+
+用户真机截图反馈：Quick Start 与 DeepSeek 迁移面板全英文，与其余中文界面不一致。
+根因：官方 3.3.1 新增的 51 个 quick_start_*/deepseek 字符串只有英文 values，
+主体迁移时未带中文翻译，系统 fallback 到英文。
+
+修复：values-zh / values-zh-rTW 各补 51 条翻译（简/繁），XML 合法、
+占位符与英文逐一匹配。提交 `735290386`（102 行新增）。
+
+**CI #74 结果**：success，23 步全绿，2031+ 测试通过，APK `RikkaHub-run74-arm64` 50.21MB。A 级通过，B/C 级由用户真机截图验证（发现 i18n 问题并已修复）。
