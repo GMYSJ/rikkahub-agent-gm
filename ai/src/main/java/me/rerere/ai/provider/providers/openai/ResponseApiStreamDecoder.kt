@@ -82,7 +82,7 @@ internal class ResponseApiStreamDecoder : StreamChunkDecoder {
             "response.output_item.added" -> {
                 val item = payload["item"]?.jsonObject ?: error("chunk item not found")
                 val type = item["type"]?.jsonPrimitive?.content ?: error("chunk type not found")
-                val id = item["id"]?.jsonPrimitive?.content ?: error("chunk id not found")
+                val id = item.itemIdOrCallId() ?: error("chunk id not found")
                 when (type) {
                     "function_call" -> {
                         val callId = item["call_id"]?.jsonPrimitive?.contentOrNull ?: id
@@ -109,7 +109,7 @@ internal class ResponseApiStreamDecoder : StreamChunkDecoder {
             "response.output_item.done" -> {
                 val item = payload["item"]?.jsonObject ?: error("chunk item not found")
                 val type = item["type"]?.jsonPrimitive?.content ?: error("chunk type not found")
-                val id = item["id"]?.jsonPrimitive?.content ?: error("chunk id not found")
+                val id = item.itemIdOrCallId() ?: error("chunk id not found")
                 when (type) {
                     "reasoning" -> {
                         val metadata = OpenAIReasoningMetadata(
@@ -344,4 +344,9 @@ internal class ResponseApiStreamDecoder : StreamChunkDecoder {
             }
         }
     }
+
+    // function_call 的 item.id 在规范中是可选的，只有 call_id 必填（官方 5ac149b9b）
+    private fun JsonObject.itemIdOrCallId(): String? =
+        this["id"]?.jsonPrimitive?.contentOrNull ?: this["call_id"]?.jsonPrimitive?.contentOrNull
+
 }
