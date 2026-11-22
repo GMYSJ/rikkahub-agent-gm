@@ -415,3 +415,19 @@ MCP 空请求头、收藏页侧滑（已修）、fork 标题序号、加号面�
 A 级以 CI 为准，B/C 未做。
 
 **CI #60 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run60-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：连接测试推理等级改 AUTO（CI #61 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `ebbcf6377` | 连接测试用 ReasoningLevel.AUTO | 测试推理模型时不再因显式关闭推理而输出异常 |
+
+3 处 TextGenerationParams 精确适配。同批评估未套用：
+悬浮窗 FxState（主体 FloatingX API 版本不同）、连接测试 dialog 重构（跨文件大改）、
+自动滚动（待核实锚点）、ChainOfThought 重构（两个 commit 叠加）。
+
+提交 `2df48bee6`（7 行新增，3 行删除）。A 级以 CI 为准，B/C 未做。
+
+**CI #61 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run61-arm64` 50.18MB。A 级通过，B/C 未做。
