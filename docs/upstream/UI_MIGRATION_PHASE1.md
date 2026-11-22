@@ -244,3 +244,35 @@ DeepSeek 迁移依赖官方 3.x 对 `Conversation` 新增的 `config` 字段
 - UI 阻塞根因：依赖主体缺失的 MediaCreationRepository / MediaCreationService /
   MediaCreationRecord / AppScope 等 3.x 数据层，需单独阶段评估
 - 已登记待迁移：DeepSeek QuickStart、ChatMessageNotices（均依赖主体缺失的数据模型）
+---
+
+## MediaGen UI 接线阻塞分析（2026-11-22，只读核实）
+
+引擎层（mediagen/ 35 文件）已迁移并通过 #52 A 级验收，但 **app 侧 UI 与数据层尚未接入**，原因经实测确认：
+
+### 数据库版本差距（核心阻塞）
+
+| 项 | 主体 | 官方 |
+|---|---|---|
+| AppDatabase version | **31** | **34** |
+| MediaCreation 表 | 无 | 3 个新 Entity：media_creation_session / node / record |
+| Migration | 主体有 Migration_30_31 | 官方改为 Migration_28_29(spec) + 31→32 + 32→33(spec) + 33→34 |
+
+### 为什么暂不接线
+
+- MediaCreation UI 7 文件依赖 MediaCreationRepository / MediaCreationService /
+  MediaCreationRecord / MediaCreationSession / MediaCreationDraft 等数据层，
+  这些又依赖上述 3 张新表。
+- 接入必须把 AppDatabase 从 31 升到 34，并替换 28→29 的 migration spec。
+- 这直接触碰**用户现有对话数据库**。用户明确要求不得丢工作区数据、不得破坏旧数据兼容，
+  且本机无真机（无法做 C 级数据迁移验证）。
+- 因此按红线暂缓，不把数据库升级混进 UI 迁移。
+
+### 后续计划（不得放弃）
+
+1. 单独阶段：备份主体数据库 schema，逐条比对 31→34 的 4 个 migration 与主体的差异。
+2. 验证 Migration_28_29 spec 替换是否影响主体已有的 28→29 数据。
+3. 设计幂等迁移 + 回滚方案，在 CI 增加数据库迁移测试。
+4. 具备 C 级验证条件（备份 + 真机/模拟器）后再接 UI 与 Provider 设置。
+
+**当前状态：MediaGen 引擎已就位但用户不可见；不得宣称图片/视频创作已可用。**
