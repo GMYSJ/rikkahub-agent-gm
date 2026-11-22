@@ -459,3 +459,16 @@ A 级以 CI 为准，B/C 未做。
 提交 `18a21c023`（22 行新增，7 行删除）。A 级以 CI 为准，B/C 未做。
 
 **CI #63 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run63-arm64` 50.18MB。A 级通过，B/C 未做。
+
+---
+
+## 追加：STA1N 内置/推荐服务商（CI #64 已验收成功）
+
+| 官方 Commit | 功能 | 用户可见变化 |
+|---|---|---|
+| `da498cb2d` | 新增 STA1N API 服务商 | 提供商设置页的内置/推荐列表里多一个 STA1N API 选项（RP 向站点） |
+
+主体按现有 DefaultProviders/RecommendedProviders 写法添加，UUID 与官方一致。
+提交 `770252ace`（43 行新增）。A 级以 CI 为准，B/C 未做。
+
+**CI #64 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run64-arm64` 50.18MB。A 级通过，B/C 未做。
