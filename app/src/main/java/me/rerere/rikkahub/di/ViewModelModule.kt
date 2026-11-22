@@ -29,6 +29,7 @@ import me.rerere.rikkahub.ui.pages.setting.scheduledjobs.ScheduledJobsViewModel
 import me.rerere.rikkahub.workflow.ui.WorkflowsViewModel
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
+import me.rerere.rikkahub.ui.pages.quickstart.QuickStartVM
 import org.koin.dsl.module
 
 val viewModelModule = module {
@@ -107,4 +108,6 @@ val viewModelModule = module {
             hfApi = get(),
         )
     }
+    viewModelOf(::QuickStartVM)
+
 }

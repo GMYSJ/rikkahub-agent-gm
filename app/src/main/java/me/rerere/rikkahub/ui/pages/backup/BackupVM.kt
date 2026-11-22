@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.ui.pages.backup
 
+import android.net.Uri
 import android.util.Log
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
@@ -17,6 +18,8 @@ import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.saveUploadFromBytes
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.sync.importer.ChatboxImporter
+import me.rerere.rikkahub.data.sync.importer.DeepSeekImportResult
+import me.rerere.rikkahub.data.sync.importer.DeepSeekMigrator
 import me.rerere.rikkahub.data.sync.importer.CherryStudioProviderImporter
 import me.rerere.rikkahub.data.sync.webdav.WebDavBackupItem
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
@@ -28,6 +31,7 @@ import java.io.File
 private const val TAG = "BackupVM"
 
 class BackupVM(
+    private val deepSeekMigrator: DeepSeekMigrator,
     private val settingsStore: SettingsStore,
     private val webDavSync: WebDavSync,
     private val s3Sync: S3Sync,
@@ -230,6 +234,10 @@ class BackupVM(
             )
         }
     }
+
+    /** 从 DeepSeek 导出的 ZIP 导入聊天记录（官方 3.3.0） */
+    suspend fun restoreFromDeepSeek(uri: Uri): DeepSeekImportResult = deepSeekMigrator.import(uri)
+
 }
 
 data class ChatboxRestoreResult(

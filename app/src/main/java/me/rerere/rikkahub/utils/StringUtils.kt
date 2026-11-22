@@ -151,3 +151,19 @@ fun String.removeBracketedContent(): String? {
     val result = pattern.replace(this, "").trim()
     return result.ifBlank { null }
 }
+
+/** 根据文件扩展名猜测 MIME（DeepSeek 导入附件用） */
+fun guessMimeTypeFromFileName(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+    "png" -> "image/png"
+    "jpg", "jpeg" -> "image/jpeg"
+    "gif" -> "image/gif"
+    "webp" -> "image/webp"
+    "svg" -> "image/svg+xml"
+    "pdf" -> "application/pdf"
+    "txt", "md" -> "text/plain"
+    "json" -> "application/json"
+    "zip" -> "application/zip"
+    "mp3" -> "audio/mpeg"
+    "mp4" -> "video/mp4"
+    else -> "application/octet-stream"
+}

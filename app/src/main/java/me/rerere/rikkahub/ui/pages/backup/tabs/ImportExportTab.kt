@@ -159,12 +159,29 @@ fun ImportExportTab(
                             // 清理临时文件
                             tempFile.delete()
                         }
+
+                        "deepseek" -> {
+                            // DeepSeek 导出的 ZIP：migrator 内部直接读取 Uri
+                            val result = vm.restoreFromDeepSeek(sourceUri)
+                            toaster.show(
+                                context.getString(
+                                    R.string.backup_page_import_deepseek_summary,
+                                    result.importedConversations,
+                                    result.skippedExistingConversations,
+                                    result.skippedEmptyConversations,
+                                    result.missingAttachments,
+                                ),
+                                type = ToastType.Success,
+                            )
+                        }
                     }
 
-                    toaster.show(
-                        context.getString(R.string.backup_page_restore_success),
-                        type = ToastType.Success
-                    )
+                    if (importType != "deepseek") {
+                        toaster.show(
+                            context.getString(R.string.backup_page_restore_success),
+                            type = ToastType.Success
+                        )
+                    }
                     onShowRestartDialog()
                 }.onFailure { e ->
                     e.printStackTrace()
@@ -297,6 +314,24 @@ fun ImportExportTab(
                     supportingContent = { Text(stringResource(R.string.backup_page_import_chatbox_desc)) },
                     leadingContent = {
                         if (isRestoring && importType == "chatbox") {
+                            CircularWavyProgressIndicator(modifier = Modifier.size(24.dp))
+                        } else {
+                            Icon(HugeIcons.FileImport, null)
+                        }
+                    },
+                )
+
+                item(
+                    onClick = if (!isRestoring) {
+                        {
+                            importType = "deepseek"
+                            openDocumentLauncher.launch(arrayOf("application/zip"))
+                        }
+                    } else null,
+                    headlineContent = { Text(stringResource(R.string.quick_start_page_deepseek_migrate_chats)) },
+                    supportingContent = { Text(stringResource(R.string.quick_start_page_deepseek_desc)) },
+                    leadingContent = {
+                        if (isRestoring && importType == "deepseek") {
                             CircularWavyProgressIndicator(modifier = Modifier.size(24.dp))
                         } else {
                             Icon(HugeIcons.FileImport, null)
