@@ -364,3 +364,19 @@ memory_consolidation / memory_file / 	ranslation_history / usage_record
 与主体不兼容，需独立阶段做「组件体系 + 数据模型适配」，
 并配 C 级验证后才能安全接入。**不得宣称媒体创作已可用。**
 
+---
+
+## 追加：三个用户可见 UI 改进（CI #58 已验收成功）
+
+在不触碰数据模型的前提下，批量移植官方 3.x 的三个纯 UI 改进：
+
+| 官方 Commit | 功能 | 文件 | 用户可见变化 |
+|---|---|---|---|
+| `48a68f873` | 模型名最多两行 | `ModelList.kt` | 长模型名不再被截断成一行 |
+| `97060dd51` | 输入栏底部渐变遮罩 | `ChatInput.kt` | 消息不再从系统导航栏/键盘后透出 |
+| `a6abed3be` | 搜索引用角标实色背景 + Medium 字重 | `Markdown.kt` | 暗色模式下引用角标可读 |
+
+提交 `9b85804ef`（17 行新增，2 行删除），提交前自检通过。
+本机无 Java/Gradle，A 级以 CI 为准；B/C 级未做。
+
+**CI #58 结果**：success，23 步全绿，2031 测试通过，APK `RikkaHub-run58-arm64` 50.18MB，versionCode 守卫 success。A 级通过；B/C 级未做。
